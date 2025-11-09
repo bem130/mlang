@@ -1,1 +1,26 @@
-add 1 5
+// 2つのi32値を加算して返す関数
+fn add(a: i32, b: i32) -> i32 {
+    $a + b$;
+}
+
+// 2つのi32値を乗算して返す関数
+fn multiply(x: i32, y: i32) -> i32 {
+    $x * y$;
+}
+
+// プログラムのエントリーポイント
+fn main() -> i32 {
+    // まず、add関数をS式で呼び出し、結果を変数に束縛します。
+    // `add 10 5` は `15` と評価されます。
+    let intermediate_result = add 10 5;
+
+    // 次に、ネストしたS式を使って計算を行います。
+    // 1. `(add intermediate_result 5)` が先に評価されます。
+    //    `intermediate_result` は 15 なので、`add 15 5` となり、結果は `20` です。
+    // 2. その結果 `20` を使って `multiply` 関数が呼び出されます。
+    //    `multiply 20 3` となり、最終的な結果は `60` になります。
+    let final_result = multiply add intermediate_result 5 3;
+
+    // 計算結果をmain関数の戻り値として返却します。
+    final_result;
+}
