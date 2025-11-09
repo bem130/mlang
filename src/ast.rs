@@ -24,13 +24,6 @@ pub enum RawAstNode {
         value: Box<RawAstNode>,
         span: Span,
     },
-    // if式
-    IfExpr {
-        condition: Box<RawAstNode>,
-        then_branch: Box<RawAstNode>,
-        else_branch: Box<RawAstNode>,
-        span: Span,
-    },
     // `{}` で囲まれたブロック
     Block {
         statements: Vec<RawAstNode>,
@@ -53,6 +46,13 @@ pub enum RawExprPart {
     MathBlock(MathAstNode, Span),
     // 型注釈 `: i32`
     TypeAnnotation(String, Span),
+    // if式はS式の一部として扱われる
+    IfExpr {
+        condition: Box<RawAstNode>,
+        then_branch: Box<RawAstNode>,
+        else_branch: Box<RawAstNode>,
+        span: Span,
+    },
 }
 
 // 数式リテラルの種類
@@ -77,8 +77,8 @@ pub enum MathAstNode {
     // 数式ブロック内での関数呼び出しは `()` が必須
     Call {
         name: (String, Span),
-        // 引数部分は再びLL1パーサーがパースするためRawExprPartのリストになる
-        args: Vec<Vec<RawExprPart>>,
+        // 引数部分は再び数式パーサーがパースするためMathAstNodeのリストになる
+        args: Vec<MathAstNode>,
         span: Span,
     },
 }
@@ -169,7 +169,6 @@ impl RawAstNode {
             RawAstNode::Expr(parts) => parts.first().unwrap().span(), // 簡易
             RawAstNode::FnDef { span, .. } => *span,
             RawAstNode::LetDef { span, .. } => *span,
-            RawAstNode::IfExpr { span, .. } => *span,
             RawAstNode::Block { span, .. } => *span,
             RawAstNode::PrintStmt { span, .. } => *span,
         }
@@ -182,6 +181,7 @@ impl RawExprPart {
             RawExprPart::Group(_, span) => *span,
             RawExprPart::MathBlock(_, span) => *span,
             RawExprPart::TypeAnnotation(_, span) => *span,
+            RawExprPart::IfExpr { span, .. } => *span,
         }
     }
 }

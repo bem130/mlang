@@ -7,7 +7,6 @@ pub mod code_generator;
 use crate::ast::*;
 use crate::error::{CompileError, LangError};
 use crate::span::Span;
-use crate::token::Token;
 use std::collections::HashMap;
 
 /// コンパイル処理全体で共有される状態を管理する構造体。

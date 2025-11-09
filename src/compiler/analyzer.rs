@@ -1,9 +1,8 @@
 //! RawASTを意味解析・型チェックし、TypedASTに変換するアナライザー。
 
-use super::{Compiler, FunctionSignature};
+use super::Compiler;
 use crate::ast::*;
 use crate::error::{CompileError, LangError};
-use crate::token::Token;
 
 /// トップレベルのRawAstNodeを型付きASTに変換するエントリーポイント
 pub fn analyze_toplevel(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedAstNode, LangError> {
@@ -19,12 +18,31 @@ pub fn analyze_toplevel(compiler: &mut Compiler, node: &RawAstNode) -> Result<Ty
             
             let typed_body = analyze_expr(compiler, body)?;
             
-            let original_return_type = return_type.as_ref().map_or(Ok(DataType::Unit), |rt| compiler.string_to_type(&rt.0, rt.1))?;
+            let mut original_return_type = return_type.as_ref().map_or(Ok(DataType::Unit), |rt| compiler.string_to_type(&rt.0, rt.1))?;
+
+            // main関数の戻り値は()でなければならないという制約を追加
+            if name.0 == "main" && original_return_type != DataType::Unit {
+                return Err(LangError::Compile(CompileError::new(
+                    "The 'main' function must have a return type of '()' or no return type",
+                    return_type.as_ref().map_or(*span, |rt| rt.1)
+                )));
+            }
+
             if typed_body.data_type != original_return_type {
-                return Err(LangError::Compile(CompileError::new(format!("Mismatched return type: expected '{}', but function body returns '{}'", original_return_type, typed_body.data_type), typed_body.span)));
+                // Unitを返す関数本体が値を返す式で終わっている場合、暗黙の戻り値を許可する
+                if original_return_type == DataType::Unit {
+                    // 何もしない。コード生成器がdropを追加する
+                } else {
+                    return Err(LangError::Compile(CompileError::new(format!("Mismatched return type: expected '{}', but function body returns '{}'", original_return_type, typed_body.data_type), typed_body.span)));
+                }
             }
             
             compiler.leave_scope();
+
+            // main関数のシグネチャの戻り値型を強制的にUnitにする
+            if name.0 == "main" {
+                original_return_type = DataType::Unit;
+            }
             
             Ok(TypedAstNode::FnDef {
                 name: name.0.clone(),
@@ -44,6 +62,22 @@ fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedExpr,
         RawAstNode::Expr(parts) => {
             let mut parts_slice = &parts[..];
             let result = analyze_sexp_from_slice(compiler, &mut parts_slice)?;
+
+            // 式の後に続くオプションの型注釈をチェックする
+            if !parts_slice.is_empty() {
+                if let RawExprPart::TypeAnnotation(type_name, type_span) = &parts_slice[0] {
+                    let expected_type = compiler.string_to_type(type_name, *type_span)?;
+                    if result.data_type != expected_type {
+                        return Err(LangError::Compile(CompileError::new(
+                            format!("Type annotation mismatch: expression has type '{}' but is annotated as '{}'", result.data_type, expected_type),
+                            result.span,
+                        )));
+                    }
+                    parts_slice = &parts_slice[1..]; // 型注釈を消費
+                }
+            }
+
+            // 式の後に余計なトークンがないか確認する
             if !parts_slice.is_empty() {
                 return Err(LangError::Compile(CompileError::new("Unexpected tokens after expression", parts_slice[0].span())));
             }
@@ -55,22 +89,6 @@ fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedExpr,
             Ok(TypedExpr {
                 kind: TypedExprKind::LetBinding { name: name.0.clone(), value: Box::new(typed_value) },
                 data_type: DataType::Unit, span: *span,
-            })
-        }
-        RawAstNode::IfExpr { condition, then_branch, else_branch, span } => {
-            let typed_cond = analyze_expr(compiler, condition)?;
-            if typed_cond.data_type != DataType::Bool {
-                return Err(LangError::Compile(CompileError::new(format!("If condition must be a boolean expression, but found type '{}'", typed_cond.data_type), typed_cond.span)));
-            }
-            let typed_then = analyze_expr(compiler, then_branch)?;
-            let typed_else = analyze_expr(compiler, else_branch)?;
-            if typed_then.data_type != typed_else.data_type {
-                return Err(LangError::Compile(CompileError::new(format!("If branches must have the same type, but found '{}' and '{}'", typed_then.data_type, typed_else.data_type), *span)));
-            }
-            let expr_type = typed_then.data_type.clone();
-            Ok(TypedExpr {
-                kind: TypedExprKind::IfExpr { condition: Box::new(typed_cond), then_branch: Box::new(typed_then), else_branch: Box::new(typed_else) },
-                data_type: expr_type, span: *span,
             })
         }
         RawAstNode::Block { statements, span } => {
@@ -108,42 +126,45 @@ fn analyze_sexp_from_slice<'a>(compiler: &mut Compiler, parts: &mut &'a [RawExpr
     *parts = &parts[1..];
 
     match first_part {
-        RawExprPart::Token(Token::Identifier(name), span) => {
-            if let Some(signature) = compiler.function_table.get(name).cloned() {
-                let mut typed_args = Vec::new();
-                for i in 0..signature.param_types.len() {
-                    let typed_arg = analyze_sexp_from_slice(compiler, parts)?;
-                    let expected_type = &signature.param_types[i];
-                    if typed_arg.data_type != *expected_type {
-                        return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name, expected_type, typed_arg.data_type), typed_arg.span)));
+        RawExprPart::Token(token, span) => match token {
+            crate::token::Token::Identifier(name) => {
+                if let Some(signature) = compiler.function_table.get(name).cloned() {
+                    let mut typed_args = Vec::new();
+                    for i in 0..signature.param_types.len() {
+                        let typed_arg = analyze_sexp_from_slice(compiler, parts)?;
+                        let expected_type = &signature.param_types[i];
+                        if typed_arg.data_type != *expected_type {
+                            return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name, expected_type, typed_arg.data_type), typed_arg.span)));
+                        }
+                        typed_args.push(typed_arg);
                     }
-                    typed_args.push(typed_arg);
+                    return Ok(TypedExpr { kind: TypedExprKind::FunctionCall { name: name.clone(), args: typed_args }, data_type: signature.return_type.clone(), span: *span });
                 }
-                return Ok(TypedExpr { kind: TypedExprKind::FunctionCall { name: name.clone(), args: typed_args }, data_type: signature.return_type.clone(), span: *span });
+                if let Some((_, var_type, _)) = compiler.find_variable(name) {
+                    return Ok(TypedExpr { kind: TypedExprKind::VariableRef(name.clone()), data_type: var_type.clone(), span: *span });
+                }
+                Err(LangError::Compile(CompileError::new(format!("Undefined function or variable '{}'", name), *span)))
             }
-            if let Some((_, var_type, _)) = compiler.find_variable(name) {
-                return Ok(TypedExpr { kind: TypedExprKind::VariableRef(name.clone()), data_type: var_type.clone(), span: *span });
-            }
-            Err(LangError::Compile(CompileError::new(format!("Undefined function or variable '{}'", name), *span)))
-        }
-        RawExprPart::Token(Token::IntLiteral(val), span) => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::I32(*val)), data_type: DataType::I32, span: *span }),
-        RawExprPart::Token(Token::FloatLiteral(val), span) => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::F64(*val)), data_type: DataType::F64, span: *span }),
-        RawExprPart::Token(Token::True, span) => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::Bool(true)), data_type: DataType::Bool, span: *span }),
-        RawExprPart::Token(Token::False, span) => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::Bool(false)), data_type: DataType::Bool, span: *span }),
-        RawExprPart::Token(Token::StringLiteral(s), span) => {
-            let s_len = s.len() as u32;
-            let header_offset = *compiler.string_headers.entry(s.clone()).or_insert_with(|| {
-                let data_offset = *compiler.string_data.entry(s.clone()).or_insert_with(|| {
-                    let offset = compiler.static_offset;
-                    compiler.static_offset += s_len;
-                    offset
+            crate::token::Token::IntLiteral(val) => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::I32(*val)), data_type: DataType::I32, span: *span }),
+            crate::token::Token::FloatLiteral(val) => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::F64(*val)), data_type: DataType::F64, span: *span }),
+            crate::token::Token::True => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::Bool(true)), data_type: DataType::Bool, span: *span }),
+            crate::token::Token::False => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::Bool(false)), data_type: DataType::Bool, span: *span }),
+            crate::token::Token::StringLiteral(s) => {
+                let s_len = s.len() as u32;
+                let header_offset = *compiler.string_headers.entry(s.clone()).or_insert_with(|| {
+                    let _data_offset = *compiler.string_data.entry(s.clone()).or_insert_with(|| {
+                        let offset = compiler.static_offset;
+                        compiler.static_offset += s_len;
+                        offset
+                    });
+                    let header_offset = compiler.static_offset;
+                    compiler.static_offset += 12; // ptr, len, cap
+                    header_offset
                 });
-                let header_offset = compiler.static_offset;
-                compiler.static_offset += 12; // ptr, len, cap
-                header_offset
-            });
-            Ok(TypedExpr { kind: TypedExprKind::StringLiteral { header_offset }, data_type: DataType::String, span: *span })
-        }
+                Ok(TypedExpr { kind: TypedExprKind::StringLiteral { header_offset }, data_type: DataType::String, span: *span })
+            }
+            _ => Err(LangError::Compile(CompileError::new(format!("This token cannot be the start of an expression: {:?}", token), *span))),
+        },
         RawExprPart::MathBlock(math_node, _) => analyze_math_node(compiler, math_node),
         RawExprPart::Group(inner_parts, _) => {
             let mut inner_slice = &inner_parts[..];
@@ -153,7 +174,23 @@ fn analyze_sexp_from_slice<'a>(compiler: &mut Compiler, parts: &mut &'a [RawExpr
             }
             Ok(result)
         }
-        _ => Err(LangError::Compile(CompileError::new("This token cannot be the start of an expression", first_part.span()))),
+        RawExprPart::IfExpr { condition, then_branch, else_branch, span } => {
+            let typed_cond = analyze_expr(compiler, condition)?;
+            if typed_cond.data_type != DataType::Bool {
+                return Err(LangError::Compile(CompileError::new(format!("If condition must be a boolean expression, but found type '{}'", typed_cond.data_type), typed_cond.span)));
+            }
+            let typed_then = analyze_expr(compiler, then_branch)?;
+            let typed_else = analyze_expr(compiler, else_branch)?;
+            if typed_then.data_type != typed_else.data_type {
+                return Err(LangError::Compile(CompileError::new(format!("If branches must have the same type, but found '{}' and '{}'", typed_then.data_type, typed_else.data_type), *span)));
+            }
+            let expr_type = typed_then.data_type.clone();
+            Ok(TypedExpr {
+                kind: TypedExprKind::IfExpr { condition: Box::new(typed_cond), then_branch: Box::new(typed_then), else_branch: Box::new(typed_else) },
+                data_type: expr_type, span: *span,
+            })
+        }
+        RawExprPart::TypeAnnotation(_, span) => Err(LangError::Compile(CompileError::new("Type annotation must follow an expression", *span))),
     }
 }
 
@@ -179,17 +216,32 @@ fn analyze_math_node(compiler: &mut Compiler, node: &MathAstNode) -> Result<Type
             }
             let op_type = &typed_left.data_type;
             let (func_name, result_type) = match (op, op_type) {
-                (Token::Plus, DataType::I32) => ("i32.add", DataType::I32), (Token::Minus, DataType::I32) => ("i32.sub", DataType::I32),
-                (Token::Star, DataType::I32) => ("i32.mul", DataType::I32), (Token::Slash, DataType::I32) => ("i32.div_s", DataType::I32),
-                (Token::Plus, DataType::F64) => ("f64.add", DataType::F64), (Token::Minus, DataType::F64) => ("f64.sub", DataType::F64),
-                (Token::Star, DataType::F64) => ("f64.mul", DataType::F64), (Token::Slash, DataType::F64) => ("f64.div", DataType::F64),
-                (Token::EqualsEquals, DataType::I32) => ("i32.eq", DataType::Bool), (Token::BangEquals, DataType::I32) => ("i32.ne", DataType::Bool),
-                (Token::LessThan, DataType::I32) => ("i32.lt_s", DataType::Bool), (Token::LessThanEquals, DataType::I32) => ("i32.le_s", DataType::Bool),
-                (Token::GreaterThan, DataType::I32) => ("i32.gt_s", DataType::Bool), (Token::GreaterThanEquals, DataType::I32) => ("i32.ge_s", DataType::Bool),
+                (crate::token::Token::Plus, DataType::I32) => ("i32.add", DataType::I32), (crate::token::Token::Minus, DataType::I32) => ("i32.sub", DataType::I32),
+                (crate::token::Token::Star, DataType::I32) => ("i32.mul", DataType::I32), (crate::token::Token::Slash, DataType::I32) => ("i32.div_s", DataType::I32),
+                (crate::token::Token::Plus, DataType::F64) => ("f64.add", DataType::F64), (crate::token::Token::Minus, DataType::F64) => ("f64.sub", DataType::F64),
+                (crate::token::Token::Star, DataType::F64) => ("f64.mul", DataType::F64), (crate::token::Token::Slash, DataType::F64) => ("f64.div", DataType::F64),
+                (crate::token::Token::EqualsEquals, DataType::I32) => ("i32.eq", DataType::Bool), (crate::token::Token::BangEquals, DataType::I32) => ("i32.ne", DataType::Bool),
+                (crate::token::Token::LessThan, DataType::I32) => ("i32.lt_s", DataType::Bool), (crate::token::Token::LessThanEquals, DataType::I32) => ("i32.le_s", DataType::Bool),
+                (crate::token::Token::GreaterThan, DataType::I32) => ("i32.gt_s", DataType::Bool), (crate::token::Token::GreaterThanEquals, DataType::I32) => ("i32.ge_s", DataType::Bool),
                 _ => return Err(LangError::Compile(CompileError::new(format!("Operator `{:?}` is not supported for type `{}`", op, op_type), *span))),
             };
             Ok(TypedExpr { kind: TypedExprKind::FunctionCall { name: func_name.to_string(), args: vec![typed_left, typed_right] }, data_type: result_type, span: *span })
         }
-        MathAstNode::Call { .. } => todo!("Function calls inside math blocks are not yet implemented"),
+        MathAstNode::Call { name, args, span } => {
+            let signature = compiler.function_table.get(&name.0).cloned().ok_or_else(|| LangError::Compile(CompileError::new(format!("Undefined function '{}' in math expression", name.0),name.1)))?;
+            if args.len() != signature.param_types.len() {
+                return Err(LangError::Compile(CompileError::new(format!("Function '{}' expects {} arguments, but {} were provided", name.0, signature.param_types.len(), args.len()), *span)));
+            }
+            let mut typed_args = Vec::new();
+            for (i, arg_node) in args.iter().enumerate() {
+                let typed_arg = analyze_math_node(compiler, arg_node)?;
+                let expected_type = &signature.param_types[i];
+                if typed_arg.data_type != *expected_type {
+                    return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name.0, expected_type, typed_arg.data_type), typed_arg.span)));
+                }
+                typed_args.push(typed_arg);
+            }
+            Ok(TypedExpr { kind: TypedExprKind::FunctionCall { name: name.0.clone(), args: typed_args }, data_type: signature.return_type.clone(), span: *span })
+        }
     }
 }

@@ -1,15 +1,15 @@
-// プログラムのエントリーポイント
+fn calculation(a: f64) -> f64 {
+    // 数式ブロック内での関数呼び出し
+    $ a * 2.0 $
+}
+
+// main関数の戻り値は常に () となる
 fn main() {
-    let s1 = "Hello";
-    let s2 = ", ";
-    let s3 = "World!";
-    
-    // 文字列を動的に連結します
-    // 1. tmp = string_concat "Hello" ", " -> "Hello, "
-    // 2. greeting = string_concat "Hello, " "World!" -> "Hello, World!"
-    let tmp = string_concat s1 s2;
-    let greeting = string_concat tmp s3;
-    
-    // 動的に生成された文字列を出力します
-    print greeting;
+    // if式の結果を変数に束縛し、さらに型注釈を付与する
+    let result = if true { 10 } else { 20 } : i32;
+
+    // S式 (関数呼び出し)
+    calculation(3.0);
+
+    // ブロックの最後に式がないため、このmain関数は暗黙的に () を返す
 }

@@ -23,8 +23,9 @@ pub fn generate(compiler: &mut Compiler, node: &TypedAstNode) -> Result<(), Lang
             collect_and_declare_locals(compiler, body);
             
             generate_expr(compiler, body)?;
-            
-            if name == "main" && *return_type != DataType::Unit {
+
+            // main関数の本体が値をスタックに残す場合、それを破棄して_startの規約(スタックを汚さない)を遵守する
+            if name == "main" && body.data_type != DataType::Unit {
                 compiler.wat_buffer.push_str("    drop\n");
             }
 
@@ -71,6 +72,12 @@ fn generate_expr(compiler: &mut Compiler, node: &TypedExpr) -> Result<(), LangEr
         TypedExprKind::LetBinding { name, value } => {
             generate_expr(compiler, value)?;
             compiler.wat_buffer.push_str(&format!("    local.set ${}\n", name));
+            // let束縛は文なので、スタックに値を残さない (Unit型だがWATレベルでの表現はない)
+            // しかし、束縛される値がUnitでない場合、local.setは値を消費しないためスタックに残る。
+            // これをdropする必要があるか？ -> local.teeを使うと値を残せるが、setは消費する。
+            // いや、let a = 1; はUnitを返すが、1はスタックに積まれる。setがそれを消費する。
+            // let a = if b {1} else {2}; の場合、ifの結果がスタックに積まれ、setが消費。
+            // よってdropは不要。
         }
         TypedExprKind::IfExpr { condition, then_branch, else_branch } => {
             generate_expr(compiler, condition)?;
@@ -85,6 +92,7 @@ fn generate_expr(compiler: &mut Compiler, node: &TypedExpr) -> Result<(), LangEr
         }
         TypedExprKind::Block { statements } => {
             if statements.is_empty() {
+                // Unitを返す空のブロックは何もしない
                 if node.data_type != DataType::Unit {
                     return Err(LangError::Compile(CompileError::new(format!("Empty block must have type '()' but found '{}'", node.data_type), node.span)));
                 }
@@ -92,6 +100,7 @@ fn generate_expr(compiler: &mut Compiler, node: &TypedExpr) -> Result<(), LangEr
             }
             for (i, stmt) in statements.iter().enumerate() {
                 generate_expr(compiler, stmt)?;
+                // ブロックの最後の式以外で、かつUnitを返さない文の結果はスタックから破棄する
                 if i < statements.len() - 1 && stmt.data_type != DataType::Unit {
                     compiler.wat_buffer.push_str("    drop\n");
                 }
