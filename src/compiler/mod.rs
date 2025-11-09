@@ -27,6 +27,7 @@ pub struct Compiler {
 pub struct FunctionSignature {
     pub param_types: Vec<DataType>,
     pub return_type: DataType,
+    pub definition_span: Span,
 }
 
 impl Compiler {
@@ -37,6 +38,7 @@ impl Compiler {
             FunctionSignature {
                 param_types: vec![DataType::String, DataType::String],
                 return_type: DataType::String,
+                definition_span: Span::default(),
             },
         );
         function_table.insert(
@@ -44,6 +46,7 @@ impl Compiler {
             FunctionSignature {
                 param_types: vec![DataType::I32],
                 return_type: DataType::String,
+                definition_span: Span::default(),
             },
         );
         function_table.insert(
@@ -51,6 +54,7 @@ impl Compiler {
             FunctionSignature {
                 param_types: vec![DataType::F64],
                 return_type: DataType::String,
+                definition_span: Span::default(),
             },
         );
 
@@ -136,14 +140,14 @@ impl Compiler {
     /// 1パス目: 関数宣言を収集し、シグネチャをテーブルに登録する
     fn prepass_declarations(&mut self, ast: &[RawAstNode]) -> Result<(), LangError> {
         for node in ast {
-            if let RawAstNode::FnDef { name, params, return_type, .. } = node {
+            if let RawAstNode::FnDef { name, params, return_type, span, .. } = node {
                 let func_name = &name.0;
                 let param_types = params.iter().map(|(_, type_info)| self.string_to_type(&type_info.0, type_info.1)).collect::<Result<Vec<_>, _>>()?;
                 let ret_type = match return_type {
                     Some(rt) => self.string_to_type(&rt.0, rt.1)?,
                     None => DataType::Unit,
                 };
-                self.function_table.insert(func_name.clone(), FunctionSignature { param_types, return_type: ret_type });
+                self.function_table.insert(func_name.clone(), FunctionSignature { param_types, return_type: ret_type, definition_span: *span });
             }
         }
         Ok(())

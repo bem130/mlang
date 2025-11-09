@@ -43,7 +43,7 @@ pub struct Span {
 
 この段階では、ソースコードを「**Raw Abstract Syntax Tree (Raw AST)**」に変換します。これは、まだ変数と関数呼び出しの区別がついていない、構造的なデータです。
 
-**サンプルコード (`sample.mylang`)**
+**サンプルコード (`sample.mlang`)**
 ```mylang
 fn main() -> () {
     let result1 = add sub 5 3 add 1 2;

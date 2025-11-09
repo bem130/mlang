@@ -176,11 +176,8 @@ impl Parser {
         // 式の終わりは、文脈を区切るトークン
         while !self.is_at_end() {
             match self.peek() {
-                Some(Token::Comma) => {
-                    self.advance(); // カンマは引数の区切りとして無視する
-                    continue;
-                }
-                Some(Token::Semicolon) | Some(Token::RBrace) | Some(Token::LBrace) | Some(Token::RParen) | Some(Token::Else) => break,
+                // カンマはC-style呼び出しの引数区切りなので、S式を終了させる
+                Some(Token::Comma) | Some(Token::Semicolon) | Some(Token::RBrace) | Some(Token::LBrace) | Some(Token::RParen) | Some(Token::Else) => break,
                 _ => parts.push(self.parse_expr_part()?),
             }
         }
@@ -204,7 +201,28 @@ impl Parser {
                 Ok(RawExprPart::Token(t, s))
             }
             Token::Dollar => self.parse_math_block(),
-            Token::LParen => self.parse_group(),
+            Token::LParen => {
+                let (_, lparen_span) = self.peek_full().unwrap().clone();
+                let mut is_c_style = false;
+
+                if self.position > 0 {
+                    let (prev_token, prev_span) = &self.tokens[self.position - 1];
+                    if let Token::Identifier(ident) = prev_token {
+                        // 識別子の終わりの位置を計算
+                        let ident_end_column = prev_span.column + ident.len();
+                        // 識別子と `(` が同じ行にあり、間に空白がないかチェック
+                        if prev_span.line == lparen_span.line && ident_end_column == lparen_span.column {
+                            is_c_style = true;
+                        }
+                    }
+                }
+
+                if is_c_style {
+                    self.parse_c_style_args()
+                } else {
+                    self.parse_s_expr_group()
+                }
+            },
             Token::Colon => self.parse_type_annotation(),
             Token::If => self.parse_if_as_part(),
             _ => {
@@ -251,20 +269,39 @@ impl Parser {
         Ok(RawExprPart::TypeAnnotation(type_name, type_span))
     }
     
-    /// `( ... )` で囲まれたグループをパースする
-    fn parse_group(&mut self) -> Result<RawExprPart, LangError> {
+    /// `( ... )` で囲まれたS式グループをパースする
+    fn parse_s_expr_group(&mut self) -> Result<RawExprPart, LangError> {
         let start_span = self.consume(Token::LParen)?.1;
-        let mut parts = Vec::new();
-        while self.peek() != Some(&Token::RParen) && !self.is_at_end() {
-            // グループ内ではカンマを無視する
-            if self.peek() == Some(&Token::Comma) {
-                self.advance();
-                continue;
+        // グループの中身は、単一のS式としてパースする
+        let inner_expr = self.parse_sexpression()?;
+        let end_span = self.consume(Token::RParen)?.1;
+        
+        if let RawAstNode::Expr(parts) = inner_expr {
+            Ok(RawExprPart::Group(parts, combine_spans(start_span, end_span)))
+        } else {
+            // parse_sexpressionは常にExprを返すはず
+            unreachable!()
+        }
+    }
+
+    /// `(...)` C-style呼び出しの引数リストをパースする
+    fn parse_c_style_args(&mut self) -> Result<RawExprPart, LangError> {
+        let start_span = self.consume(Token::LParen)?.1;
+        let mut args = Vec::new();
+
+        if self.peek() != Some(&Token::RParen) {
+            loop {
+                // 各引数はそれ自体が完結したS式
+                let arg_node = self.parse_sexpression()?;
+                args.push(arg_node);
+
+                if !self.check_and_consume(Token::Comma) {
+                    break;
+                }
             }
-            parts.push(self.parse_expr_part()?);
         }
         let end_span = self.consume(Token::RParen)?.1;
-        Ok(RawExprPart::Group(parts, combine_spans(start_span, end_span)))
+        Ok(RawExprPart::CStyleArgs(args, combine_spans(start_span, end_span)))
     }
 
     /// `$ ... $` で囲まれた数式ブロックをパースする

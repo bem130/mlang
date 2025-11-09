@@ -2,6 +2,7 @@
 
 use crate::span::Span;
 use thiserror::Error;
+use std::fmt;
 
 /// ライブラリ全体で発生しうるエラーの集約
 #[derive(Debug, Error)]
@@ -30,11 +31,11 @@ impl ParseError {
 }
 
 /// コンパイルエラー（意味解析、型チェックなど）
-#[derive(Debug, Error)]
-#[error("{message} at {span}")]
+#[derive(Debug)]
 pub struct CompileError {
     pub message: String,
     pub span: Span,
+    pub notes: Vec<(String, Span)>,
 }
 
 impl CompileError {
@@ -42,6 +43,28 @@ impl CompileError {
         Self {
             message: message.into(),
             span,
+            notes: Vec::new(),
         }
     }
+
+    pub fn with_note(mut self, message: impl Into<String>, span: Span) -> Self {
+        self.notes.push((message.into(), span));
+        self
+    }
 }
+
+impl fmt::Display for CompileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} at {}", self.message, self.span)?;
+        for (note, span) in &self.notes {
+            if span.line > 0 {
+                write!(f, "\n  note: {} at {}", note, span)?;
+            } else {
+                write!(f, "\n  note: {}", note)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for CompileError {}

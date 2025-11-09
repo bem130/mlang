@@ -58,7 +58,7 @@ pub fn analyze_toplevel(compiler: &mut Compiler, node: &RawAstNode) -> Result<Ty
 }
 
 /// RawASTノード（式）を受け取り、意味解析と型チェックを行ってTypedExprを返す
-pub fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedExpr, LangError> {
+fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedExpr, LangError> {
     match node {
         RawAstNode::Expr(parts) => {
             // 式の解析では、現在のスコープで束縛される変数の知識は不要
@@ -180,60 +180,93 @@ fn analyze_statement_with_hoisting(compiler: &mut Compiler, node: &RawAstNode, h
 fn analyze_sexp_from_slice<'a>(compiler: &mut Compiler, parts: &mut &'a [RawExprPart], hoisted_vars: &HashSet<String>) -> Result<TypedExpr, LangError> {
     if parts.is_empty() { return Err(LangError::Compile(CompileError::new("Unexpected end of expression", Default::default()))); }
     let first_part = &parts[0];
-    *parts = &parts[1..];
+    // S式の場合はこの時点でスライスを進めない。C-style呼び出しかどうかで分岐してから進める。
 
     match first_part {
-        RawExprPart::Token(token, span) => match token {
-            Token::Identifier(name) => {
-                // --- 名前解決ロジック ---
-                // 1. 変数として解決できるか試す (hoistingを考慮)
-                if hoisted_vars.contains(name) || compiler.find_variable(name).is_some() {
-                    if let Some((original_name, unique_name, var_type, _)) = compiler.find_variable(name) {
-                        return Ok(TypedExpr { kind: TypedExprKind::VariableRef{ name: original_name.clone(), unique_name: unique_name.clone() }, data_type: var_type.clone(), span: *span });
-                    } else {
-                        // hoistedにはあるが、まだvariable_tableにはない -> 定義前の使用
-                        return Err(LangError::Compile(CompileError::new(format!("Cannot read local variable '{}' in its own initializer", name), *span)));
-                    }
+        RawExprPart::Token(Token::Identifier(name), span) => {
+            // --- 名前解決ロジック ---
+            // C-style `add(...)`呼び出しかどうかをチェック
+            if let Some(RawExprPart::CStyleArgs(arg_nodes, _)) = parts.get(1) {
+                *parts = &parts[2..]; // `add`と`CStyleArgs`を消費
+                
+                let signature = compiler.function_table.get(name).cloned().ok_or_else(|| LangError::Compile(CompileError::new(format!("Undefined function '{}'", name), *span)))?;
+                if arg_nodes.len() != signature.param_types.len() {
+                    return Err(LangError::Compile(
+                        CompileError::new(
+                            format!("Function '{}' expects {} arguments, but {} were provided", name, signature.param_types.len(), arg_nodes.len()),
+                            *span
+                        ).with_note(
+                            format!("'{}' is defined here", name),
+                            signature.definition_span
+                        )
+                    ));
                 }
-                // 2. 関数として解決できるか試す
-                if let Some(signature) = compiler.function_table.get(name).cloned() {
-                    let mut typed_args = Vec::new();
-                    // ... (引数の解析ロジックは変更なし) ...
-                    if let Some(RawExprPart::Group(inner_parts, _)) = parts.get(0) {
-                        *parts = &parts[1..];
-                        let mut arg_slice = &inner_parts[..];
-                        for i in 0..signature.param_types.len() {
-                            if arg_slice.is_empty() { return Err(LangError::Compile(CompileError::new(format!("Function '{}' expects {} arguments, but only {} were provided", name, signature.param_types.len(), i), *span))); }
-                            let typed_arg = analyze_sexp_from_slice(compiler, &mut arg_slice, &HashSet::new())?; // Group内は別スコープなのでhoistedは空
-                            if typed_arg.data_type != signature.param_types[i] { return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name, signature.param_types[i], typed_arg.data_type), typed_arg.span))); }
-                            typed_args.push(typed_arg);
-                        }
-                        if !arg_slice.is_empty() { return Err(LangError::Compile(CompileError::new(format!("Function '{}' expects {} arguments, but too many were provided", name, signature.param_types.len()), arg_slice[0].span()))); }
-                    } else {
-                        for i in 0..signature.param_types.len() {
-                             if parts.is_empty() { return Err(LangError::Compile(CompileError::new(format!("Function '{}' expects {} arguments, but only {} were provided", name, signature.param_types.len(), i),*span))); }
-                            let typed_arg = analyze_sexp_from_slice(compiler, parts, hoisted_vars)?;
-                            if typed_arg.data_type != signature.param_types[i] { return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name, signature.param_types[i], typed_arg.data_type), typed_arg.span))); }
-                            typed_args.push(typed_arg);
-                        }
+                
+                let mut typed_args = Vec::new();
+                for (i, arg_node) in arg_nodes.iter().enumerate() {
+                    let typed_arg = analyze_expr(compiler, arg_node)?;
+                    if typed_arg.data_type != signature.param_types[i] { 
+                        return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name, signature.param_types[i], typed_arg.data_type), typed_arg.span))); 
                     }
-                    return Ok(TypedExpr { kind: TypedExprKind::FunctionCall { name: name.clone(), args: typed_args }, data_type: signature.return_type.clone(), span: *span });
+                    typed_args.push(typed_arg);
                 }
-                // 3. どちらでもない場合は未定義エラー
-                Err(LangError::Compile(CompileError::new(format!("Undefined function or variable '{}'", name), *span)))
+                return Ok(TypedExpr { kind: TypedExprKind::FunctionCall { name: name.clone(), args: typed_args }, data_type: signature.return_type.clone(), span: *span });
             }
-            Token::IntLiteral(val) => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::I32(*val)), data_type: DataType::I32, span: *span }),
-            Token::FloatLiteral(val) => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::F64(*val)), data_type: DataType::F64, span: *span }),
-            Token::True => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::Bool(true)), data_type: DataType::Bool, span: *span }),
-            Token::False => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::Bool(false)), data_type: DataType::Bool, span: *span }),
-            Token::StringLiteral(s) => {
-                let header_offset = compiler.ensure_string_is_statically_allocated(s);
-                Ok(TypedExpr { kind: TypedExprKind::StringLiteral { header_offset }, data_type: DataType::String, span: *span })
+
+            // --- S式スタイルの解析 ---
+            *parts = &parts[1..]; // `add`などの関数名を消費
+            // 1. 変数として解決できるか試す
+            if hoisted_vars.contains(name) || compiler.find_variable(name).is_some() {
+                if let Some((original_name, unique_name, var_type, _)) = compiler.find_variable(name) {
+                    return Ok(TypedExpr { kind: TypedExprKind::VariableRef{ name: original_name.clone(), unique_name: unique_name.clone() }, data_type: var_type.clone(), span: *span });
+                } else {
+                    return Err(LangError::Compile(CompileError::new(format!("Cannot read local variable '{}' in its own initializer", name), *span)));
+                }
             }
-            _ => Err(LangError::Compile(CompileError::new(format!("This token cannot be the start of an expression: {:?}", token), *span))),
+            // 2. 関数として解決できるか試す
+            if let Some(signature) = compiler.function_table.get(name).cloned() {
+                let mut typed_args = Vec::new();
+                for i in 0..signature.param_types.len() {
+                     if parts.is_empty() {
+                         return Err(LangError::Compile(
+                            CompileError::new(
+                                format!("Function '{}' expects {} arguments, but only {} were provided", name, signature.param_types.len(), i),
+                                *span
+                            ).with_note(
+                                format!("'{}' is defined here", name),
+                                signature.definition_span
+                            )
+                         ));
+                     }
+                    let typed_arg = analyze_sexp_from_slice(compiler, parts, hoisted_vars)?;
+                    if typed_arg.data_type != signature.param_types[i] { return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name, signature.param_types[i], typed_arg.data_type), typed_arg.span))); }
+                    typed_args.push(typed_arg);
+                }
+                return Ok(TypedExpr { kind: TypedExprKind::FunctionCall { name: name.clone(), args: typed_args }, data_type: signature.return_type.clone(), span: *span });
+            }
+            // 3. どちらでもない場合は未定義エラー
+            Err(LangError::Compile(CompileError::new(format!("Undefined function or variable '{}'", name), *span)))
+        }
+        RawExprPart::Token(token, span) => {
+            *parts = &parts[1..]; // トークンを消費
+            match token {
+                Token::IntLiteral(val) => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::I32(*val)), data_type: DataType::I32, span: *span }),
+                Token::FloatLiteral(val) => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::F64(*val)), data_type: DataType::F64, span: *span }),
+                Token::True => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::Bool(true)), data_type: DataType::Bool, span: *span }),
+                Token::False => Ok(TypedExpr { kind: TypedExprKind::Literal(LiteralValue::Bool(false)), data_type: DataType::Bool, span: *span }),
+                Token::StringLiteral(s) => {
+                    let header_offset = compiler.ensure_string_is_statically_allocated(s);
+                    Ok(TypedExpr { kind: TypedExprKind::StringLiteral { header_offset }, data_type: DataType::String, span: *span })
+                }
+                _ => Err(LangError::Compile(CompileError::new(format!("This token cannot be the start of an expression: {:?}", token), *span))),
+            }
         },
-        RawExprPart::MathBlock(math_node, _) => analyze_math_node(compiler, math_node),
+        RawExprPart::MathBlock(math_node, _) => {
+            *parts = &parts[1..];
+            analyze_math_node(compiler, math_node)
+        },
         RawExprPart::Group(inner_parts, _) => {
+            *parts = &parts[1..];
             let mut inner_slice = &inner_parts[..];
             let result = analyze_sexp_from_slice(compiler, &mut inner_slice, &HashSet::new())?; // Group内は別スコープ
             if !inner_slice.is_empty() {
@@ -242,6 +275,7 @@ fn analyze_sexp_from_slice<'a>(compiler: &mut Compiler, parts: &mut &'a [RawExpr
             Ok(result)
         }
         RawExprPart::IfExpr { condition, then_branch, else_branch, span } => {
+            *parts = &parts[1..];
             let typed_cond = analyze_expr(compiler, condition)?;
             if typed_cond.data_type != DataType::Bool {
                 return Err(LangError::Compile(CompileError::new(format!("If condition must be a boolean expression, but found type '{}'", typed_cond.data_type), typed_cond.span)));
@@ -258,6 +292,7 @@ fn analyze_sexp_from_slice<'a>(compiler: &mut Compiler, parts: &mut &'a [RawExpr
             })
         }
         RawExprPart::TypeAnnotation(_, span) => Err(LangError::Compile(CompileError::new("Type annotation must follow an expression", *span))),
+        RawExprPart::CStyleArgs(_, span) => Err(LangError::Compile(CompileError::new("Argument list cannot be at the start of an expression", *span))),
     }
 }
 
@@ -294,7 +329,16 @@ fn analyze_math_node(compiler: &mut Compiler, node: &MathAstNode) -> Result<Type
         }
         MathAstNode::Call { name, args, span } => {
             let signature = compiler.function_table.get(&name.0).cloned().ok_or_else(|| LangError::Compile(CompileError::new(format!("Undefined function '{}' in math expression", name.0),name.1)))?;
-            if args.len() != signature.param_types.len() { return Err(LangError::Compile(CompileError::new(format!("Function '{}' expects {} arguments, but {} were provided", name.0, signature.param_types.len(), args.len()), *span))); }
+            if args.len() != signature.param_types.len() {
+                let err = CompileError::new(
+                    format!("Function '{}' expects {} arguments, but {} were provided", name.0, signature.param_types.len(), args.len()),
+                    *span
+                ).with_note(
+                    format!("'{}' is defined here", name.0),
+                    signature.definition_span
+                );
+                return Err(err.into());
+            }
             let mut typed_args = Vec::new();
             for (i, arg_node) in args.iter().enumerate() {
                 let typed_arg = analyze_math_node(compiler, arg_node)?;

@@ -45,8 +45,10 @@ pub enum RawAstNode {
 #[derive(Debug, PartialEq, Clone)]
 pub enum RawExprPart {
     Token(Token, Span),
-    // `()` で囲まれたグループ
+    // `()` で囲まれたS式グループ
     Group(Vec<RawExprPart>, Span),
+    // C-style呼び出し `()` の引数リスト
+    CStyleArgs(Vec<RawAstNode>, Span),
     // `$$` で囲まれた数式ブロック
     MathBlock(MathAstNode, Span),
     // 型注釈 `: i32`
@@ -192,6 +194,7 @@ impl RawExprPart {
         match self {
             RawExprPart::Token(_, span) => *span,
             RawExprPart::Group(_, span) => *span,
+            RawExprPart::CStyleArgs(_, span) => *span,
             RawExprPart::MathBlock(_, span) => *span,
             RawExprPart::TypeAnnotation(_, span) => *span,
             RawExprPart::IfExpr { span, .. } => *span,
