@@ -60,6 +60,10 @@ impl<'a> Lexer<'a> {
                 self.next_char(); // '>'を消費
                 Ok(Some((Token::Arrow, span)))
             }
+            // `-` の後に数字が続く場合は、負の数リテラルとして扱う
+            '-' if self.peek().map_or(false, |c| c.is_ascii_digit()) => {
+                Ok(Some((self.consume_number(char), span)))
+            }
             '-' => Ok(Some((Token::Minus, span))),
             '*' => Ok(Some((Token::Star, span))),
             '/' => Ok(Some((Token::Slash, span))),

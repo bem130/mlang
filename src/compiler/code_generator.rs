@@ -54,30 +54,35 @@ fn generate_expr(compiler: &mut Compiler, node: &TypedExpr) -> Result<(), LangEr
             compiler.wat_buffer.push_str(&format!("    local.get ${}\n", name));
         }
         TypedExprKind::FunctionCall { name, args } => {
-             if name == "string_concat" {
-                generate_expr(compiler, &args[0])?;
-                generate_expr(compiler, &args[1])?;
-                compiler.wat_buffer.push_str("    call $__string_concat\n");
-                return Ok(());
+            // 特別に処理される組み込み関数
+            match name.as_str() {
+                "string_concat" => {
+                    generate_expr(compiler, &args[0])?;
+                    generate_expr(compiler, &args[1])?;
+                    compiler.wat_buffer.push_str("    call $__string_concat\n");
+                    return Ok(());
+                }
+                "i32_to_string" => {
+                    generate_expr(compiler, &args[0])?;
+                    compiler.wat_buffer.push_str("    call $__i32_to_string\n");
+                    return Ok(());
+                }
+                _ => {}
             }
+            
+            // 一般の関数呼び出し
             for arg in args {
                 generate_expr(compiler, arg)?;
             }
-            if name.contains('.') {
+            if name.contains('.') { // Wasmの組み込み命令 (例: i32.add)
                 compiler.wat_buffer.push_str(&format!("    {}\n", name));
-            } else {
+            } else { // ユーザー定義関数
                 compiler.wat_buffer.push_str(&format!("    call ${}\n", name));
             }
         }
         TypedExprKind::LetBinding { name, value } => {
             generate_expr(compiler, value)?;
             compiler.wat_buffer.push_str(&format!("    local.set ${}\n", name));
-            // let束縛は文なので、スタックに値を残さない (Unit型だがWATレベルでの表現はない)
-            // しかし、束縛される値がUnitでない場合、local.setは値を消費しないためスタックに残る。
-            // これをdropする必要があるか？ -> local.teeを使うと値を残せるが、setは消費する。
-            // いや、let a = 1; はUnitを返すが、1はスタックに積まれる。setがそれを消費する。
-            // let a = if b {1} else {2}; の場合、ifの結果がスタックに積まれ、setが消費。
-            // よってdropは不要。
         }
         TypedExprKind::IfExpr { condition, then_branch, else_branch } => {
             generate_expr(compiler, condition)?;
@@ -92,7 +97,6 @@ fn generate_expr(compiler: &mut Compiler, node: &TypedExpr) -> Result<(), LangEr
         }
         TypedExprKind::Block { statements } => {
             if statements.is_empty() {
-                // Unitを返す空のブロックは何もしない
                 if node.data_type != DataType::Unit {
                     return Err(LangError::Compile(CompileError::new(format!("Empty block must have type '()' but found '{}'", node.data_type), node.span)));
                 }
@@ -100,7 +104,6 @@ fn generate_expr(compiler: &mut Compiler, node: &TypedExpr) -> Result<(), LangEr
             }
             for (i, stmt) in statements.iter().enumerate() {
                 generate_expr(compiler, stmt)?;
-                // ブロックの最後の式以外で、かつUnitを返さない文の結果はスタックから破棄する
                 if i < statements.len() - 1 && stmt.data_type != DataType::Unit {
                     compiler.wat_buffer.push_str("    drop\n");
                 }
@@ -182,5 +185,53 @@ pub fn generate_builtin_helpers(compiler: &mut Compiler) {
     compiler.wat_buffer.push_str("    local.get $new_header_ptr\n    local.get $new_len\n    i32.store offset=4\n");
     compiler.wat_buffer.push_str("    local.get $new_header_ptr\n    local.get $new_cap\n    i32.store offset=8\n");
     compiler.wat_buffer.push_str("    local.get $new_header_ptr\n");
+    compiler.wat_buffer.push_str("  )\n");
+
+    // --- __i32_to_string ---
+    compiler.wat_buffer.push_str("  (func $__i32_to_string (param $n i32) (result i32)\n");
+    compiler.wat_buffer.push_str("    (local $is_neg i32) (local $len i32) (local $temp_ptr i32) (local $write_ptr i32)\n");
+    compiler.wat_buffer.push_str("    (local $char_ptr i32) (local $cap i32) (local $header_ptr i32) (local $i i32)\n");
+    compiler.wat_buffer.push_str("    i32.const 16\n    call $__alloc\n    local.set $temp_ptr\n");
+    compiler.wat_buffer.push_str("    local.get $temp_ptr\n    local.set $write_ptr\n");
+    compiler.wat_buffer.push_str("    local.get $n\n    i32.const 0\n    i32.lt_s\n    local.set $is_neg\n");
+    compiler.wat_buffer.push_str("    local.get $is_neg\n    if\n");
+    compiler.wat_buffer.push_str("      local.get $n\n      i32.const -1\n      i32.mul\n      local.set $n\n");
+    compiler.wat_buffer.push_str("    end\n");
+    compiler.wat_buffer.push_str("    local.get $n\n    i32.const 0\n    i32.eq\n    if\n");
+    compiler.wat_buffer.push_str("      local.get $write_ptr\n      i32.const 48\n      i32.store8\n");
+    compiler.wat_buffer.push_str("      local.get $write_ptr\n      i32.const 1\n      i32.add\n      local.set $write_ptr\n");
+    compiler.wat_buffer.push_str("    else\n");
+    compiler.wat_buffer.push_str("      (loop $digits\n");
+    compiler.wat_buffer.push_str("        local.get $write_ptr\n");
+    compiler.wat_buffer.push_str("        local.get $n\n        i32.const 10\n        i32.rem_u\n");
+    compiler.wat_buffer.push_str("        i32.const 48\n        i32.add\n");
+    compiler.wat_buffer.push_str("        i32.store8\n");
+    compiler.wat_buffer.push_str("        local.get $write_ptr\n        i32.const 1\n        i32.add\n        local.set $write_ptr\n");
+    compiler.wat_buffer.push_str("        local.get $n\n        i32.const 10\n        i32.div_u\n        local.set $n\n");
+    compiler.wat_buffer.push_str("        local.get $n\n        i32.const 0\n        i32.ne\n");
+    compiler.wat_buffer.push_str("        br_if $digits\n");
+    compiler.wat_buffer.push_str("      )\n");
+    compiler.wat_buffer.push_str("    end\n");
+    compiler.wat_buffer.push_str("    local.get $is_neg\n    if\n");
+    compiler.wat_buffer.push_str("      local.get $write_ptr\n      i32.const 45\n      i32.store8\n");
+    compiler.wat_buffer.push_str("      local.get $write_ptr\n      i32.const 1\n      i32.add\n      local.set $write_ptr\n");
+    compiler.wat_buffer.push_str("    end\n");
+    compiler.wat_buffer.push_str("    local.get $write_ptr\n    local.get $temp_ptr\n    i32.sub\n    local.set $len\n");
+    compiler.wat_buffer.push_str("    local.get $len\n    local.set $cap\n");
+    compiler.wat_buffer.push_str("    local.get $cap\n    call $__alloc\n    local.set $char_ptr\n");
+    compiler.wat_buffer.push_str("    (loop $reverse\n");
+    compiler.wat_buffer.push_str("      local.get $char_ptr\n      local.get $i\n      i32.add\n");
+    compiler.wat_buffer.push_str("      local.get $write_ptr\n      local.get $i\n      i32.sub\n      i32.const 1\n      i32.sub\n");
+    compiler.wat_buffer.push_str("      i32.load8_u\n");
+    compiler.wat_buffer.push_str("      i32.store8\n");
+    compiler.wat_buffer.push_str("      local.get $i\n      i32.const 1\n      i32.add\n      local.set $i\n");
+    compiler.wat_buffer.push_str("      local.get $i\n      local.get $len\n      i32.lt_s\n");
+    compiler.wat_buffer.push_str("      br_if $reverse\n");
+    compiler.wat_buffer.push_str("    )\n");
+    compiler.wat_buffer.push_str("    i32.const 12\n    call $__alloc\n    local.set $header_ptr\n");
+    compiler.wat_buffer.push_str("    local.get $header_ptr\n    local.get $char_ptr\n    i32.store offset=0\n");
+    compiler.wat_buffer.push_str("    local.get $header_ptr\n    local.get $len\n    i32.store offset=4\n");
+    compiler.wat_buffer.push_str("    local.get $header_ptr\n    local.get $cap\n    i32.store offset=8\n");
+    compiler.wat_buffer.push_str("    local.get $header_ptr\n");
     compiler.wat_buffer.push_str("  )\n");
 }

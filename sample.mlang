@@ -1,15 +1,10 @@
-fn calculation(a: f64) -> f64 {
-    // 数式ブロック内での関数呼び出し
-    $ a * 2.0 $
-}
-
-// main関数の戻り値は常に () となる
 fn main() {
-    // if式の結果を変数に束縛し、さらに型注釈を付与する
-    let result = if true { 10 } else { 20 } : i32;
+    let my_number = 12345;
+    let num_as_string = i32_to_string(my_number);
+    let message = string_concat("The number is: ", num_as_string);
+    print(message);
 
-    // S式 (関数呼び出し)
-    calculation(3.0);
-
-    // ブロックの最後に式がないため、このmain関数は暗黙的に () を返す
+    // 負の数と0のテスト
+    print(string_concat("A negative number: ", i32_to_string(-987)));
+    print(string_concat("Zero: ", i32_to_string(0)));
 }

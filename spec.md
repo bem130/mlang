@@ -46,8 +46,8 @@ pub struct Span {
 **サンプルコード (`sample.mylang`)**
 ```mylang
 fn main() -> () {
-    let result = add (sub 5 3): i32 $1+2$;
-    result
+    let result1 = add (sub 5 3): i32 $1+2$;
+    let result2 = add(sub 5 3, $1+2$);
 }
 ```
 

@@ -36,6 +36,20 @@ impl Compiler {
                 return_type: DataType::String,
             },
         );
+        function_table.insert(
+            "i32_to_string".to_string(),
+            FunctionSignature {
+                param_types: vec![DataType::I32],
+                return_type: DataType::String,
+            },
+        );
+        function_table.insert(
+            "f64_to_string".to_string(),
+            FunctionSignature {
+                param_types: vec![DataType::F64],
+                return_type: DataType::String,
+            },
+        );
 
         Self {
             wat_buffer: String::new(),
@@ -53,7 +67,6 @@ impl Compiler {
         self.prepass_declarations(ast)?;
         
         // --- フェーズ1: 意味解析 ---
-        // このパスでAST全体を型付きASTに変換し、静的文字列を収集する
         let typed_ast: Vec<TypedAstNode> = ast
             .iter()
             .map(|node| analyzer::analyze_toplevel(self, node))
@@ -81,6 +94,7 @@ impl Compiler {
         Ok(self.wat_buffer.clone())
     }
     
+    /// 文字列リテラルのデータセクションとヘッダセクションを生成
     fn generate_data_sections(&mut self) {
         let mut sorted_data: Vec<_> = self.string_data.iter().collect();
         sorted_data.sort_by_key(|&(_, offset)| offset);
@@ -108,6 +122,7 @@ impl Compiler {
         }
     }
 
+    /// 1パス目: 関数宣言を収集し、シグネチャをテーブルに登録する
     fn prepass_declarations(&mut self, ast: &[RawAstNode]) -> Result<(), LangError> {
         for node in ast {
             if let RawAstNode::FnDef { name, params, return_type, .. } = node {
@@ -144,5 +159,20 @@ impl Compiler {
             DataType::Bool => "i32", DataType::String => "i32",
             DataType::Unit => "",
         }
+    }
+
+    /// 文字列リテラルを静的領域に確保し、そのヘッダオフセットを返す
+    pub fn ensure_string_is_statically_allocated(&mut self, s: &String) -> u32 {
+        *self.string_headers.entry(s.clone()).or_insert_with(|| {
+            let s_len = s.len() as u32;
+            let _data_offset = *self.string_data.entry(s.clone()).or_insert_with(|| {
+                let offset = self.static_offset;
+                self.static_offset += s_len;
+                offset
+            });
+            let header_offset = self.static_offset;
+            self.static_offset += 12; // ptr, len, cap
+            header_offset
+        })
     }
 }

@@ -163,6 +163,10 @@ impl Parser {
         // 式の終わりは、文脈を区切るトークン
         while !self.is_at_end() {
             match self.peek() {
+                Some(Token::Comma) => {
+                    self.advance(); // カンマは引数の区切りとして無視する
+                    continue;
+                }
                 Some(Token::Semicolon) | Some(Token::RBrace) | Some(Token::LBrace) | Some(Token::RParen) | Some(Token::Else) => break,
                 _ => parts.push(self.parse_expr_part()?),
             }
@@ -239,6 +243,11 @@ impl Parser {
         let start_span = self.consume(Token::LParen)?.1;
         let mut parts = Vec::new();
         while self.peek() != Some(&Token::RParen) && !self.is_at_end() {
+            // グループ内ではカンマを無視する
+            if self.peek() == Some(&Token::Comma) {
+                self.advance();
+                continue;
+            }
             parts.push(self.parse_expr_part()?);
         }
         let end_span = self.consume(Token::RParen)?.1;

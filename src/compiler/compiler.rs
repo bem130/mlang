@@ -1,30 +1,25 @@
 //! RawASTを受け取り、意味解析、型チェック、コード生成を行うコンパイラ。
 
+// サブモジュールを宣言
+pub mod analyzer;
+pub mod code_generator;
+
 use crate::ast::*;
 use crate::error::{CompileError, LangError};
 use crate::span::Span;
-use crate::token::Token;
 use std::collections::HashMap;
 
 /// コンパイル処理全体で共有される状態を管理する構造体。
 pub struct Compiler {
-    // WATコードの生成結果を保持する
     pub wat_buffer: String,
-    // 現在のスコープの深さ
     pub scope_depth: usize,
-    // 関数名とそのシグネチャを保持するテーブル
     pub function_table: HashMap<String, FunctionSignature>,
-    // 変数名とその型、スコープ深度を保持するテーブル
     pub variable_table: Vec<(String, DataType, usize)>,
-    // 文字列リテラルとそのデータオフセットのマッピング
     pub string_data: HashMap<String, u32>,
-    // 文字列リテラルに対応するヘッダのオフセット
     pub string_headers: HashMap<String, u32>,
-    // 次に静的データを配置する線形メモリのオフセット
     pub static_offset: u32,
 }
 
-/// 関数のシグネチャ情報
 #[derive(Clone)]
 pub struct FunctionSignature {
     pub param_types: Vec<DataType>,
@@ -34,11 +29,24 @@ pub struct FunctionSignature {
 impl Compiler {
     pub fn new() -> Self {
         let mut function_table = HashMap::new();
-        // 組み込み関数を登録
         function_table.insert(
             "string_concat".to_string(),
             FunctionSignature {
                 param_types: vec![DataType::String, DataType::String],
+                return_type: DataType::String,
+            },
+        );
+        function_table.insert(
+            "i32_to_string".to_string(),
+            FunctionSignature {
+                param_types: vec![DataType::I32],
+                return_type: DataType::String,
+            },
+        );
+        function_table.insert(
+            "f64_to_string".to_string(),
+            FunctionSignature {
+                param_types: vec![DataType::F64],
                 return_type: DataType::String,
             },
         );
@@ -50,7 +58,6 @@ impl Compiler {
             variable_table: Vec::new(),
             string_data: HashMap::new(),
             string_headers: HashMap::new(),
-            // メモリの先頭はiovec等で使うため、少し余裕をもたせる
             static_offset: 32,
         }
     }
@@ -58,26 +65,23 @@ impl Compiler {
     /// コンパイルのメインエントリーポイント
     pub fn compile(&mut self, ast: &[RawAstNode]) -> Result<String, LangError> {
         self.prepass_declarations(ast)?;
-
-        // --- フェーズ1: 意味解析のみを行い、静的データを収集 ---
+        
+        // --- フェーズ1: 意味解析 ---
         let typed_ast: Vec<TypedAstNode> = ast
             .iter()
-            .filter(|node| matches!(node, RawAstNode::FnDef { .. }))
-            .map(|node| self.analyze_and_type_check(node))
+            .map(|node| analyzer::analyze_toplevel(self, node))
             .collect::<Result<_, _>>()?;
 
         // --- フェーズ2: コード生成 ---
         self.wat_buffer.push_str("(module\n");
         self.wat_buffer.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
         self.wat_buffer.push_str("  (memory (export \"memory\") 1)\n");
-        // ヒープポインタを静的領域の末尾で初期化
         self.wat_buffer.push_str(&format!("  (global $heap_ptr (mut i32) (i32.const {}))\n", self.static_offset));
         
-        self.generate_builtin_helpers();
+        code_generator::generate_builtin_helpers(self);
 
-        // 型チェック済みのASTを使ってコード生成
         for node in &typed_ast {
-            self.compile_function_def(node)?;
+            code_generator::generate(self, node)?;
         }
 
         if self.function_table.contains_key("main") {
@@ -104,7 +108,7 @@ impl Compiler {
         for (s, header_offset) in sorted_headers {
             let data_offset = self.string_data.get(s).unwrap();
             let len = s.len() as u32;
-            let cap = len * 2;
+            let cap = len; // 静的文字列なので容量と長さは同じ
 
             let mut header_bytes = Vec::new();
             header_bytes.extend_from_slice(&data_offset.to_le_bytes());
@@ -134,29 +138,41 @@ impl Compiler {
         Ok(())
     }
 
-    /// `TypedAstNode`から関数定義をコンパイルする
-    fn compile_function_def(&mut self, node: &TypedAstNode) -> Result<(), LangError> {
-        if let TypedNodeKind::Block { .. } = &node.kind { // body is always a block
-            let func_name = if let Some((name, _)) = self.variable_table.first() { name } else { "" }; // Hacky way to get func name
-            
-            self.enter_scope(); // Re-enter scope for params
-            // This is complex because params are part of the outer scope in analysis, but local scope in codegen
-            // For now, we assume `compile` calls this in order and `variable_table` is not yet cleared.
-            
-            self.wat_buffer.push_str(&format!("  (func ${}\n", "main")); // FIXME: Needs proper name
-            
-            self.generate_wat_for_node(node)?;
-
-            self.wat_buffer.push_str("  )\n");
-            self.leave_scope();
-            Ok(())
-        } else {
-             Ok(()) // Not a FnDef
+    pub fn enter_scope(&mut self) { self.scope_depth += 1; }
+    pub fn leave_scope(&mut self) {
+        self.variable_table.retain(|(_, _, depth)| *depth < self.scope_depth);
+        self.scope_depth -= 1;
+    }
+    pub fn find_variable(&self, name: &str) -> Option<&(String, DataType, usize)> {
+        self.variable_table.iter().rev().find(|(var_name, _, _)| var_name == name)
+    }
+    pub fn string_to_type(&self, s: &str, span: Span) -> Result<DataType, LangError> {
+        match s {
+            "i32" => Ok(DataType::I32), "f64" => Ok(DataType::F64), "bool" => Ok(DataType::Bool),
+            "string" => Ok(DataType::String), "()" => Ok(DataType::Unit),
+            _ => Err(LangError::Compile(CompileError::new(format!("Unknown type '{}'", s), span))),
         }
     }
-}
+    pub fn type_to_wat(&self, t: &DataType) -> &str {
+        match t {
+            DataType::I32 => "i32", DataType::F64 => "f64",
+            DataType::Bool => "i32", DataType::String => "i32",
+            DataType::Unit => "",
+        }
+    }
 
-// ... Rest of the file needs to be in analyzer/code_generator ...
-// This file is becoming a placeholder for the top-level orchestration.
-// The actual implementation of `analyze` and `generate` should be in their respective modules.
-// The provided snippet is incomplete and needs the full modularized code.
+    /// 文字列リテラルを静的領域に確保し、そのヘッダオフセットを返す
+    pub fn ensure_string_is_statically_allocated(&mut self, s: &String) -> u32 {
+        *self.string_headers.entry(s.clone()).or_insert_with(|| {
+            let s_len = s.len() as u32;
+            let _data_offset = *self.string_data.entry(s.clone()).or_insert_with(|| {
+                let offset = self.static_offset;
+                self.static_offset += s_len;
+                offset
+            });
+            let header_offset = self.static_offset;
+            self.static_offset += 12; // ptr, len, cap
+            header_offset
+        })
+    }
+}
