@@ -86,7 +86,10 @@ fn generate_expr(compiler: &mut Compiler, node: &TypedExpr) -> Result<(), LangEr
         TypedExprKind::LetBinding { name, value } => {
             compiler.wat_buffer.push_str(&format!("    ;; Let: {}\n", name.0));
             generate_expr(compiler, value)?;
-            compiler.wat_buffer.push_str(&format!("    local.set ${}\n", name.1));
+            // 値を持つ型の場合のみ local.set を行う
+            if value.data_type != DataType::Unit {
+                compiler.wat_buffer.push_str(&format!("    local.set ${}\n", name.1));
+            }
         }
         TypedExprKind::IfExpr { condition, then_branch, else_branch } => {
             compiler.wat_buffer.push_str("    ;; If\n");
@@ -227,7 +230,10 @@ pub fn collect_and_declare_locals(compiler: &mut Compiler, typed_body: &TypedExp
     if !locals.is_empty() {
         compiler.wat_buffer.push_str("    ;; Local variables\n");
         for (unique_name, data_type) in locals {
-            compiler.wat_buffer.push_str(&format!("    (local ${} {})\n", unique_name, compiler.type_to_wat(&data_type)));
+            // 【修正点】Unit型の変数はWasmのローカル変数として宣言しない
+            if data_type != DataType::Unit {
+                compiler.wat_buffer.push_str(&format!("    (local ${} {})\n", unique_name, compiler.type_to_wat(&data_type)));
+            }
         }
     }
 

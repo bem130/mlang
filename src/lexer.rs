@@ -141,7 +141,35 @@ impl<'a> Lexer<'a> {
             if *c == '"' {
                 break;
             }
-            s.push(self.next_char().unwrap());
+
+            let current_char = self.next_char().unwrap();
+            // エスケープシーケンスの処理
+            if current_char == '\\' {
+                match self.peek() {
+                    Some('n') => {
+                        self.next_char(); // 'n' を消費
+                        s.push('\n');
+                    }
+                    Some('t') => {
+                        self.next_char(); // 't' を消費
+                        s.push('\t');
+                    }
+                    Some('\\') => {
+                        self.next_char(); // '\' を消費
+                        s.push('\\');
+                    }
+                    Some('"') => {
+                        self.next_char(); // '"' を消費
+                        s.push('"');
+                    }
+                    Some(other) => {
+                         return Err(format!("Unknown escape sequence '\\{}'", other));
+                    }
+                    None => return Err("Unterminated string literal".to_string()),
+                }
+            } else {
+                s.push(current_char);
+            }
         }
         
         if self.peek().is_none() {
