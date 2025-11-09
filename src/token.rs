@@ -1,0 +1,46 @@
+//! 字句解析の結果であるトークンの種類を定義します。
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Token {
+    // Keywords
+    Fn,
+    Let,
+    If,
+    Else,
+
+    // Identifier and Literals
+    Identifier(String),
+    IntLiteral(i64),
+    FloatLiteral(f64),
+
+    // Symbols
+    LParen,   // (
+    RParen,   // )
+    LBrace,   // {
+    RBrace,   // }
+    Dollar,   // $
+    Colon,    // :
+    Comma,    // ,
+    Equals,   // =
+    Arrow,    // ->
+    Semicolon,// ;
+
+    // Operators
+    Plus,     // +
+    Minus,    // -
+    Star,     // *
+    Slash,    // /
+}
+
+impl Token {
+    /// 文字列がキーワードに一致する場合、対応するTokenを返す
+    pub fn from_keyword(s: &str) -> Option<Self> {
+        match s {
+            "fn" => Some(Token::Fn),
+            "let" => Some(Token::Let),
+            "if" => Some(Token::If),
+            "else" => Some(Token::Else),
+            _ => None,
+        }
+    }
+}
