@@ -92,36 +92,50 @@ pub enum LiteralValue {
 }
 
 // 2パス目の意味解析・型チェックを経て生成される、意味が確定した構文木
+// これはトップレベルの項目を表す
 #[derive(Debug, Clone)]
-pub struct TypedAstNode {
-    pub kind: TypedNodeKind,
+pub enum TypedAstNode {
+    FnDef {
+        name: String,
+        params: Vec<(String, DataType)>,
+        body: TypedExpr,
+        return_type: DataType,
+        span: Span,
+    },
+    // 将来的にトップレベルの`const`などもここに追加できる
+}
+
+// 型付きの「式」を表すデータ構造
+#[derive(Debug, Clone)]
+pub struct TypedExpr {
+    pub kind: TypedExprKind,
     pub data_type: DataType,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub enum TypedNodeKind {
+pub enum TypedExprKind {
     Literal(LiteralValue),
     StringLiteral { header_offset: u32 },
     VariableRef(String),
     LetBinding {
         name: String,
-        value: Box<TypedAstNode>,
+        value: Box<TypedExpr>,
     },
     FunctionCall {
         name: String,
-        args: Vec<TypedAstNode>,
+        args: Vec<TypedExpr>,
     },
     IfExpr {
-        condition: Box<TypedAstNode>,
-        then_branch: Box<TypedAstNode>,
-        else_branch: Box<TypedAstNode>,
+        condition: Box<TypedExpr>,
+        then_branch: Box<TypedExpr>,
+        else_branch: Box<TypedExpr>,
     },
     Block {
-        statements: Vec<TypedAstNode>,
+        statements: Vec<TypedExpr>,
     },
     PrintStmt {
-        value: Box<TypedAstNode>,
+        value: Box<TypedExpr>,
     },
 }
 

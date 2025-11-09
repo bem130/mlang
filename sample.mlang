@@ -1,30 +1,15 @@
-// 2つのi32値のうち大きい方を返す関数
-fn max(a: i32, b: i32) -> i32 {
-    if $a > b$ {
-        a;
-    } else {
-        b;
-    }
-}
-
-// プログラムのエントリーポイント (WASIでは戻り値なし)
+// プログラムのエントリーポイント
 fn main() {
-    print "Hello from mylang!";
-    let my_score = 75;
-    let friend_score = 95;
-
-    let high_score = max my_score friend_score;
-
-    let bonus = if $high_score >= 90$ {
-        100;
-    } else if $high_score > 70$ {
-        50;
-    } else {
-        10;
-    };
+    let s1 = "Hello";
+    let s2 = ", ";
+    let s3 = "World!";
     
-    // bonus の値は現在表示する方法がないため、ここで処理は終わるが、
-    // 将来的には print bonus; のようなことができるようになる。
-    // 今は固定の文字列を出力して動作確認。
-    print "Calculation finished.";
+    // 文字列を動的に連結します
+    // 1. tmp = string_concat "Hello" ", " -> "Hello, "
+    // 2. greeting = string_concat "Hello, " "World!" -> "Hello, World!"
+    let tmp = string_concat s1 s2;
+    let greeting = string_concat tmp s3;
+    
+    // 動的に生成された文字列を出力します
+    print greeting;
 }
