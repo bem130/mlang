@@ -84,8 +84,8 @@ pub enum MathAstNode {
     // 数式ブロック内での関数呼び出しは `()` が必須
     Call {
         name: (String, Span),
-        // 引数部分は再び数式パーサーがパースするためMathAstNodeのリストになる
-        args: Vec<MathAstNode>,
+        // 引数はS式として解析されるため、RawAstNodeのリストになる
+        args: Vec<RawAstNode>,
         span: Span,
     },
 }

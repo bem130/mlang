@@ -58,7 +58,7 @@ pub fn analyze_toplevel(compiler: &mut Compiler, node: &RawAstNode) -> Result<Ty
 }
 
 /// RawASTノード（式）を受け取り、意味解析と型チェックを行ってTypedExprを返す
-fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedExpr, LangError> {
+pub fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedExpr, LangError> {
     match node {
         RawAstNode::Expr(parts) => {
             // 式の解析では、現在のスコープで束縛される変数の知識は不要
@@ -296,7 +296,7 @@ fn analyze_sexp_from_slice<'a>(compiler: &mut Compiler, parts: &mut &'a [RawExpr
     }
 }
 
-// 数式ノードの解析ロジック（変更なし）
+/// 数式ノードの解析ロジック
 fn analyze_math_node(compiler: &mut Compiler, node: &MathAstNode) -> Result<TypedExpr, LangError> {
     match node {
         MathAstNode::Literal(literal, span) => match literal {
@@ -341,7 +341,8 @@ fn analyze_math_node(compiler: &mut Compiler, node: &MathAstNode) -> Result<Type
             }
             let mut typed_args = Vec::new();
             for (i, arg_node) in args.iter().enumerate() {
-                let typed_arg = analyze_math_node(compiler, arg_node)?;
+                // 引数がRawAstNodeになったので、メインの`analyze_expr`で解析する
+                let typed_arg = analyze_expr(compiler, arg_node)?;
                 let expected_type = &signature.param_types[i];
                 if typed_arg.data_type != *expected_type { return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name.0, expected_type, typed_arg.data_type), typed_arg.span))); }
                 typed_args.push(typed_arg);

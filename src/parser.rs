@@ -122,7 +122,6 @@ impl Parser {
             Some(Token::Let) => self.parse_let_def(),
             Some(Token::Print) => self.parse_print_stmt(),
             Some(Token::Println) => self.parse_println_stmt(),
-            Some(Token::LBrace) => self.parse_block(),
             _ => self.parse_expression(),
         }
     }
@@ -167,7 +166,11 @@ impl Parser {
 
     /// 式をパースする
     fn parse_expression(&mut self) -> Result<RawAstNode, LangError> {
-        self.parse_sexpression()
+        if self.peek() == Some(&Token::LBrace) {
+            self.parse_block()
+        } else {
+            self.parse_sexpression()
+        }
     }
 
     /// S式（S-expression）をパースする
@@ -377,8 +380,8 @@ impl Parser {
 
         if self.peek() != Some(&Token::RParen) {
             loop {
-                // 各引数はそれ自体が数式なので、parse_math_expressionでパースする
-                let arg_node = self.parse_math_expression(0)?;
+                // 各引数はS式として解析する。これによりパーサーが再帰的に協調する。
+                let arg_node = self.parse_sexpression()?;
                 args.push(arg_node);
 
                 if !self.check_and_consume(Token::Comma) {
@@ -473,6 +476,91 @@ impl Parser {
                 ParseError::new(format!("Expected an identifier but found '{:?}'", token), span)
                     .into(),
             )
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    // Helper function to parse a math expression string
+    fn parse_math_str(input: &str) -> Result<MathAstNode, LangError> {
+        let mut lexer = Lexer::new(input);
+        // テストのために`$`をダミーでトークナイズリストの前後に追加
+        let mut tokens = vec![(Token::Dollar, Span::default())];
+        tokens.extend(lexer.tokenize_all().unwrap());
+        tokens.push((Token::Dollar, Span::default()));
+        
+        let mut parser = Parser::new(tokens);
+        parser.consume(Token::Dollar)?; // 開始の`$`を消費
+        parser.parse_math_expression(0)
+    }
+
+    #[test]
+    fn test_math_call_with_simple_sexpr_arg() {
+        // 数式内の関数呼び出しの引数が、単純なS式（リテラル）であるケース
+        let result = parse_math_str("my_func(123)");
+        assert!(result.is_ok());
+        if let Ok(MathAstNode::Call { name, args, .. }) = result {
+            assert_eq!(name.0, "my_func");
+            assert_eq!(args.len(), 1);
+            // 引数が `RawAstNode::Expr([RawExprPart::Token(IntLiteral(123), ...)])` であることを確認
+            if let RawAstNode::Expr(parts) = &args[0] {
+                assert_eq!(parts.len(), 1);
+                assert!(matches!(&parts[0], RawExprPart::Token(Token::IntLiteral(123), _)));
+            } else {
+                panic!("Argument should be a RawAstNode::Expr");
+            }
+        } else {
+            panic!("Expected MathAstNode::Call, got {:?}", result);
+        }
+    }
+    
+    #[test]
+    fn test_math_call_with_sexpr_function_call_arg() {
+        // 数式内の関数呼び出しの引数が、S式の関数呼び出しであるケース
+        let result = parse_math_str("my_func(add 1 2)");
+        assert!(result.is_ok());
+        if let Ok(MathAstNode::Call { name, args, .. }) = result {
+            assert_eq!(name.0, "my_func");
+            assert_eq!(args.len(), 1);
+            // 引数が `RawAstNode::Expr([Token(Ident("add")), Token(Num(1)), Token(Num(2))])` であることを確認
+            if let RawAstNode::Expr(parts) = &args[0] {
+                assert_eq!(parts.len(), 3);
+                assert!(matches!(&parts[0], RawExprPart::Token(Token::Identifier(s), _) if s == "add"));
+            } else {
+                panic!("Argument should be a RawAstNode::Expr");
+            }
+        } else {
+            panic!("Expected MathAstNode::Call, got {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_the_problematic_factorial_case() {
+        // 当初問題となった、数式内の関数呼び出しの引数が、さらに数式ブロックであるケース
+        let result = parse_math_str("n * factorial($n - 1$)");
+        assert!(result.is_ok());
+
+        // $n * f($n-1$)$ の構造が InfixOp { left: Var(n), op: Star, right: Call { args: [Expr([MathBlock(...)])] } }
+        // になっていることを確認
+        if let Ok(MathAstNode::InfixOp { op, right, .. }) = result {
+            assert_eq!(op, Token::Star);
+            if let MathAstNode::Call { name, args, .. } = *right {
+                 assert_eq!(name.0, "factorial");
+                 assert_eq!(args.len(), 1);
+                 if let RawAstNode::Expr(parts) = &args[0] {
+                    assert_eq!(parts.len(), 1);
+                    assert!(matches!(&parts[0], RawExprPart::MathBlock(_, _)));
+                 } else {
+                    panic!("Argument should be a RawAstNode::Expr containing a MathBlock");
+                 }
+            } else {
+                panic!("Right side of InfixOp should be a Call");
+            }
+        } else {
+            panic!("Expected MathAstNode::InfixOp, got {:?}", result);
         }
     }
 }
