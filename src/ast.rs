@@ -41,19 +41,23 @@ pub enum RawAstNode {
     }
 }
 
-// RawAstNode::Exprを構成する部品
+/// `RawAstNode::Expr`を構成する、意味が未解決の部品。
+/// パーサーはソースコードの構造のみを認識し、この単位に分解する。
 #[derive(Debug, PartialEq, Clone)]
 pub enum RawExprPart {
+    /// 数値リテラル、識別子などの単一トークン。
     Token(Token, Span),
-    // `()` で囲まれたS式グループ
+    /// S式グループ `( ... )`。式の評価順序を制御する。
+    /// `(` の前に空白がある場合に生成される。
     Group(Vec<RawExprPart>, Span),
-    // C-style呼び出し `()` の引数リスト
+    /// C-style呼び出し `f(...)` の引数リスト。
+    /// 識別子と `(` がソースコード上で隣接している場合に生成される。
     CStyleArgs(Vec<RawAstNode>, Span),
-    // `$$` で囲まれた数式ブロック
+    /// `$$` で囲まれた数式ブロック。内部ではPrattパーサーにより中置記法が解析される。
     MathBlock(MathAstNode, Span),
-    // 型注釈 `: i32`
+    /// 型注釈 `: i32`。
     TypeAnnotation(String, Span),
-    // if式はS式の一部として扱われる
+    /// if式。S式の一部として扱われる。
     IfExpr {
         condition: Box<RawAstNode>,
         then_branch: Box<RawAstNode>,
@@ -84,7 +88,8 @@ pub enum MathAstNode {
     // 数式ブロック内での関数呼び出しは `()` が必須
     Call {
         name: (String, Span),
-        // 引数はS式として解析されるため、RawAstNodeのリストになる
+        // 引数はS式として解析されるため、RawAstNodeのリストになる。
+        // これにより `my_func(add 1 2)` のような引数を記述できる。
         args: Vec<RawAstNode>,
         span: Span,
     },

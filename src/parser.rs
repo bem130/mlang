@@ -208,6 +208,9 @@ impl Parser {
                 let (_, lparen_span) = self.peek_full().unwrap().clone();
                 let mut is_c_style = false;
 
+                // mylangの構文の核となるルール: 識別子と'('の間に空白があるかどうかで、
+                // C-style呼び出し `f(...)` とS式グループ `( ... )` を区別する。
+                // ここではトークンのスパン情報を直接比較して、隣接しているかを判定する。
                 if self.position > 0 {
                     let (prev_token, prev_span) = &self.tokens[self.position - 1];
                     if let Token::Identifier(ident) = prev_token {
@@ -334,6 +337,8 @@ impl Parser {
                 }
                 Token::Identifier(name) => {
                     self.advance(); // 識別子を消費
+                    // 数式ブロック内では、トップレベルのパーサーとは異なり、識別子の次に'('があれば、
+                    // 間に空白があってもC-style呼び出しとみなす。
                     if self.peek() == Some(&Token::LParen) {
                         self.parse_math_call(name, span)?
                     } else {
@@ -380,7 +385,8 @@ impl Parser {
 
         if self.peek() != Some(&Token::RParen) {
             loop {
-                // 各引数はS式として解析する。これによりパーサーが再帰的に協調する。
+                // 各引数はS式として解析する。これにより、`my_func(add 1 2)` や `my_func($a+b$)` のように、
+                // 数式ブロックの中から通常のS式パーサーを再帰的に呼び出す、協調的な構造になっている。
                 let arg_node = self.parse_sexpression()?;
                 args.push(arg_node);
 

@@ -9,7 +9,12 @@ use crate::error::{CompileError, LangError};
 use crate::span::Span;
 use std::collections::HashMap;
 
-/// コンパイル処理全体で共有される状態を管理する構造体。
+/// コンパイル処理全体を管理し、状態を保持する構造体。
+/// mylangのコンパイルは以下のパイプラインで実行される。
+/// 1. **宣言収集 (Pre-pass)**: `prepass_declarations`で全関数シグネチャを収集。
+/// 2. **意味解析 (Analyze)**: `analyzer`モジュールがRawASTをTypedASTに変換。
+///    - 名前解決、型チェック、ASTの構造変換を行う。
+/// 3. **コード生成 (Code Generation)**: `code_generator`モジュールがTypedASTをWATコードに変換。
 pub struct Compiler {
     pub wat_buffer: String,
     pub scope_depth: usize,

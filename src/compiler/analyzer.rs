@@ -176,7 +176,13 @@ fn analyze_statement_with_hoisting(compiler: &mut Compiler, node: &RawAstNode, h
      }
 }
 
-/// RawExprPartのスライスから一つのS式を解析し、消費した分スライスを進める
+/// RawExprPartのスライスから一つの意味のある式(TypedExpr)を解析する。
+/// この関数はアナライザーの心臓部であり、パーサーが作った未解決の構造を解釈する。
+/// - 先頭の要素が識別子の場合:
+///   - 後続が`CStyleArgs`なら、C-style関数呼び出しとして解決を試みる。
+///   - そうでなければ、変数参照 or S式関数呼び出しとして解決を試みる。
+/// - 先頭の要素がリテラルや`Group`, `MathBlock`などの場合、それを評価する。
+/// 解析が成功すると、消費した分だけ入力スライスを進め、結果のTypedExprを返す。
 fn analyze_sexp_from_slice<'a>(compiler: &mut Compiler, parts: &mut &'a [RawExprPart], hoisted_vars: &HashSet<String>) -> Result<TypedExpr, LangError> {
     if parts.is_empty() { return Err(LangError::Compile(CompileError::new("Unexpected end of expression", Default::default()))); }
     let first_part = &parts[0];
