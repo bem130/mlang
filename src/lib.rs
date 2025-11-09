@@ -3,7 +3,7 @@
 
 mod ast;
 mod compiler;
-mod error;
+pub mod error;
 mod lexer;
 mod parser;
 mod span;

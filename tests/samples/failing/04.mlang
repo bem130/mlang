@@ -1,0 +1,8 @@
+fn main() {
+    {
+        let secret = 42;
+    };
+    
+    // `secret` はスコープ外なので、ここでエラーになるべき
+    println (i32_to_string secret);
+}

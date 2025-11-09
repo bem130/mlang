@@ -1,0 +1,86 @@
+// 再帰、相互呼び出し、複雑な条件分岐など、より高度な機能をテストする
+
+// --- 再帰関数: 階乗 ---
+// nの階乗 (n!) を計算する
+fn factorial(n: i32) -> i32 {
+    if $n <= 1$ {
+        1 // ベースケース: 1! = 1, 0! = 1
+    } else {
+        // 再帰ステップ: n * (n-1)!
+        $n * (factorial ($n - 1$))$
+    }
+}
+
+// --- 関数の相互呼び出し: 偶数・奇数判定 ---
+// is_oddを呼び出すことで偶数かどうかを判定する
+fn is_even(n: i32) -> bool {
+    if $n == 0$ {
+        true
+    } else {
+        // is_evenが定義される前にis_oddを呼び出す
+        is_odd($n - 1$)
+    }
+}
+
+// is_evenを呼び出すことで奇数かどうかを判定する
+fn is_odd(n: i32) -> bool {
+    if $n == 0$ {
+        false
+    } else {
+        is_even($n - 1$)
+    }
+}
+
+// --- 条件分岐と文字列操作を多用するメイン関数 ---
+fn main() {
+    println "--- mylang advanced test start ---";
+
+    // 1. 再帰関数のテスト
+    let fact5 = factorial(5); // 5! = 120
+    println string_concat "1. Factorial of 5 is: " (i32_to_string fact5);
+    let fact7 = factorial(7); // 7! = 5040
+    println string_concat "   Factorial of 7 is: " (i32_to_string fact7);
+
+    // 2. 関数の相互呼び出しテスト
+    let num1 = 10;
+    let num2 = 11;
+    let is_num1_even = is_even(num1);
+    let is_num2_odd = is_odd(num2);
+
+    println string_concat "2. Is 10 even? -> " (if is_num1_even { "true" } else { "false" });
+    println string_concat "   Is 11 odd? -> " (if is_num2_odd { "true" } else { "false" });
+
+    // 3. 複雑な条件分岐とレポート生成
+    let score = 85;
+    let attendance = 95;
+    let grade_report = {
+        println string_concat "3. Generating report for score: " (i32_to_string score);
+
+        // AND条件を模倣: scoreが60以上 AND attendanceが80以上か？
+        let passed_exam = $score >= 60$;
+        let good_attendance = $attendance >= 80$;
+
+        if passed_exam {
+            if good_attendance {
+                // ネストしたif
+                let grade = if $score >= 90$ {
+                    "A (Excellent)"
+                } else {
+                    if $score >= 80$ {
+                        "B (Good)"
+                    } else {
+                        "C (Passed)"
+                    }
+                };
+                string_concat "Result: Passed, Grade: " grade
+            } else {
+                "Result: Failed (Poor Attendance)"
+            }
+        } else {
+            "Result: Failed (Low Score)"
+        }
+    };
+    println grade_report;
+
+    println "--- mylang advanced test finished ---";
+}
