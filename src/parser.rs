@@ -116,11 +116,13 @@ impl Parser {
         })
     }
     
-    /// 1つの文 (`let`, `if`, `print` または 式) をパースする
+    /// 1つの文 (`let`, `if`, `print`, `{}` または 式) をパースする
     fn parse_statement(&mut self) -> Result<RawAstNode, LangError> {
         match self.peek() {
             Some(Token::Let) => self.parse_let_def(),
             Some(Token::Print) => self.parse_print_stmt(),
+            Some(Token::Println) => self.parse_println_stmt(),
+            Some(Token::LBrace) => self.parse_block(),
             _ => self.parse_expression(),
         }
     }
@@ -131,6 +133,17 @@ impl Parser {
         let value = self.parse_expression()?;
         let end_span = value.span();
         Ok(RawAstNode::PrintStmt {
+            value: Box::new(value),
+            span: combine_spans(start_span, end_span)
+        })
+    }
+
+    /// `println <expression>` 文をパースする
+    fn parse_println_stmt(&mut self) -> Result<RawAstNode, LangError> {
+        let start_span = self.consume(Token::Println)?.1;
+        let value = self.parse_expression()?;
+        let end_span = value.span();
+        Ok(RawAstNode::PrintlnStmt {
             value: Box::new(value),
             span: combine_spans(start_span, end_span)
         })
@@ -267,7 +280,7 @@ impl Parser {
 
     /// Pratt-parser を用いて中置記法の数式をパースする
     fn parse_math_expression(&mut self, precedence: u8) -> Result<MathAstNode, LangError> {
-        // Prefix (リテラル, 変数, 関数呼び出しなど)
+        // Prefix (リテラル, 変数, 関数呼び出し, グループ化された式など)
         let mut left = {
             let (token, span) = self.peek_full().ok_or_else(|| ParseError::new("Unexpected end of math expression", self.peek_span()))?.clone();
             match token {
@@ -287,9 +300,15 @@ impl Parser {
                         MathAstNode::Variable(name, span)
                     }
                 }
+                Token::LParen => {
+                    self.consume(Token::LParen)?; // '(' を消費
+                    let expr = self.parse_math_expression(0)?; // 内側の式をパース
+                    self.consume(Token::RParen)?; // ')' を消費
+                    expr
+                }
                 _ => {
                     return Err(ParseError::new(
-                        format!("Expected literal, variable or function call in math expression, found {:?}", token),
+                        format!("Expected literal, variable, function call or '(' in math expression, found {:?}", token),
                         span,
                     )
                     .into())
@@ -298,10 +317,10 @@ impl Parser {
         };
 
         // Infix (中置演算子)
-        while precedence < self.get_infix_precedence() {
+        while precedence < self.get_infix_precedence(&self.peek()) {
             let (op_token, _op_span) = self.advance();
-            let right_precedence = self.get_infix_precedence();
-            let right = self.parse_math_expression(right_precedence)?;
+            let op_prec = self.get_token_precedence(&op_token);
+            let right = self.parse_math_expression(op_prec)?;
             let combined_span = combine_spans(left.span(), right.span());
             left = MathAstNode::InfixOp {
                 op: op_token,
@@ -340,13 +359,22 @@ impl Parser {
         })
     }
 
-    /// 中置演算子の優先順位を返す
-    fn get_infix_precedence(&self) -> u8 {
-        match self.peek() {
-            Some(Token::EqualsEquals) | Some(Token::BangEquals) | Some(Token::LessThan)
-            | Some(Token::LessThanEquals) | Some(Token::GreaterThan) | Some(Token::GreaterThanEquals) => 1,
-            Some(Token::Plus) | Some(Token::Minus) => 2,
-            Some(Token::Star) | Some(Token::Slash) => 3,
+    /// 次のトークンから中置演算子の優先順位を返す (lookahead)
+    fn get_infix_precedence(&self, token: &Option<&Token>) -> u8 {
+        if let Some(token) = token {
+            self.get_token_precedence(token)
+        } else {
+            0
+        }
+    }
+
+    /// トークン自体から優先順位を返す
+    fn get_token_precedence(&self, token: &Token) -> u8 {
+         match token {
+            Token::EqualsEquals | Token::BangEquals | Token::LessThan
+            | Token::LessThanEquals | Token::GreaterThan | Token::GreaterThanEquals => 1,
+            Token::Plus | Token::Minus => 2,
+            Token::Star | Token::Slash => 3,
             _ => 0,
         }
     }

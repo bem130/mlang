@@ -70,6 +70,9 @@ fn run_wasm(wat_code: &str) -> Result<(), Box<dyn std::error::Error>> {
                 written_bytes += buf_len;
             }
 
+            // 即座に出力を反映させるためにflushする
+            io::stdout().flush().map_err(|_| Trap::new("failed to flush stdout"))?;
+
             // 書き込んだバイト数をメモリに書き戻す
             memory.write(&mut caller, nwritten_ptr as usize, &written_bytes.to_le_bytes()).map_err(|_| Trap::new("pointer out of bounds"))?;
             

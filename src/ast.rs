@@ -33,6 +33,11 @@ pub enum RawAstNode {
     PrintStmt {
         value: Box<RawAstNode>,
         span: Span,
+    },
+    // println文
+    PrintlnStmt {
+        value: Box<RawAstNode>,
+        span: Span,
     }
 }
 
@@ -117,9 +122,13 @@ pub struct TypedExpr {
 pub enum TypedExprKind {
     Literal(LiteralValue),
     StringLiteral { header_offset: u32 },
-    VariableRef(String),
+    VariableRef {
+        name: String, // 元の名前 (エラーメッセージ用)
+        unique_name: String, // WAT内でのユニークな名前
+    },
     LetBinding {
-        name: String,
+        // name: (元の名前, ユニークな名前)
+        name: (String, String),
         value: Box<TypedExpr>,
     },
     FunctionCall {
@@ -135,6 +144,9 @@ pub enum TypedExprKind {
         statements: Vec<TypedExpr>,
     },
     PrintStmt {
+        value: Box<TypedExpr>,
+    },
+    PrintlnStmt {
         value: Box<TypedExpr>,
     },
 }
@@ -171,6 +183,7 @@ impl RawAstNode {
             RawAstNode::LetDef { span, .. } => *span,
             RawAstNode::Block { span, .. } => *span,
             RawAstNode::PrintStmt { span, .. } => *span,
+            RawAstNode::PrintlnStmt { span, .. } => *span,
         }
     }
 }

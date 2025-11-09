@@ -14,7 +14,10 @@ pub struct Compiler {
     pub wat_buffer: String,
     pub scope_depth: usize,
     pub function_table: HashMap<String, FunctionSignature>,
-    pub variable_table: Vec<(String, DataType, usize)>,
+    // (ソース名, ユニーク名, 型, スコープ深度)
+    pub variable_table: Vec<(String, String, DataType, usize)>,
+    // 各変数名のカウンター
+    pub var_counters: HashMap<String, u32>,
     pub string_data: HashMap<String, u32>,
     pub string_headers: HashMap<String, u32>,
     pub static_offset: u32,
@@ -51,15 +54,22 @@ impl Compiler {
             },
         );
 
-        Self {
+        let mut compiler = Self {
             wat_buffer: String::new(),
             scope_depth: 0,
             function_table,
             variable_table: Vec::new(),
+            var_counters: HashMap::new(),
             string_data: HashMap::new(),
             string_headers: HashMap::new(),
             static_offset: 32,
-        }
+        };
+        
+        // printlnが内部的に使用する改行文字を静的領域に事前登録しておく
+        // これにより、ヒープ開始アドレスが正しく計算される
+        compiler.ensure_string_is_statically_allocated(&"\n".to_string());
+
+        compiler
     }
 
     /// コンパイルのメインエントリーポイント
@@ -76,7 +86,7 @@ impl Compiler {
         self.wat_buffer.push_str("(module\n");
         self.wat_buffer.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
         self.wat_buffer.push_str("  (memory (export \"memory\") 1)\n");
-        self.wat_buffer.push_str(&format!("  (global $heap_ptr (mut i32) (i32.const {}))\n", self.static_offset));
+        self.wat_buffer.push_str(&format!("  (global $heap_ptr (mut i32) (i32.const {})) ;; Heap starts after static data\n", self.static_offset));
         
         code_generator::generate_builtin_helpers(self);
 
@@ -96,10 +106,11 @@ impl Compiler {
     
     /// 文字列リテラルのデータセクションとヘッダセクションを生成
     fn generate_data_sections(&mut self) {
+        self.wat_buffer.push_str("\n  ;; --- Static Data Sections ---\n");
         let mut sorted_data: Vec<_> = self.string_data.iter().collect();
         sorted_data.sort_by_key(|&(_, offset)| offset);
         for (s, offset) in sorted_data {
-            let escaped_s = s.replace('\\', "\\\\").replace('"', "\\\"");
+            let escaped_s = s.escape_default().to_string();
             self.wat_buffer.push_str(&format!("  (data (i32.const {}) \"{}\")\n", offset, escaped_s));
         }
 
@@ -118,7 +129,7 @@ impl Compiler {
             let header_data_str = header_bytes.iter().map(|b| format!("\\{:02x}", b)).collect::<String>();
             let escaped_comment = s.escape_default().to_string();
 
-            self.wat_buffer.push_str(&format!("  (data (i32.const {}) \"{}\") ;; Ptr, Len, Cap for \"{}\"\n", header_offset, header_data_str, escaped_comment));
+            self.wat_buffer.push_str(&format!("  (data (i32.const {}) \"{}\") ;; String Header for \"{}\"\n", header_offset, header_data_str, escaped_comment));
         }
     }
 
@@ -140,11 +151,11 @@ impl Compiler {
 
     pub fn enter_scope(&mut self) { self.scope_depth += 1; }
     pub fn leave_scope(&mut self) {
-        self.variable_table.retain(|(_, _, depth)| *depth < self.scope_depth);
+        self.variable_table.retain(|(_, _, _, depth)| *depth < self.scope_depth);
         self.scope_depth -= 1;
     }
-    pub fn find_variable(&self, name: &str) -> Option<&(String, DataType, usize)> {
-        self.variable_table.iter().rev().find(|(var_name, _, _)| var_name == name)
+    pub fn find_variable(&self, name: &str) -> Option<&(String, String, DataType, usize)> {
+        self.variable_table.iter().rev().find(|(var_name, _, _, _)| var_name == name)
     }
     pub fn string_to_type(&self, s: &str, span: Span) -> Result<DataType, LangError> {
         match s {
@@ -163,16 +174,31 @@ impl Compiler {
 
     /// 文字列リテラルを静的領域に確保し、そのヘッダオフセットを返す
     pub fn ensure_string_is_statically_allocated(&mut self, s: &String) -> u32 {
-        *self.string_headers.entry(s.clone()).or_insert_with(|| {
-            let s_len = s.len() as u32;
-            let _data_offset = *self.string_data.entry(s.clone()).or_insert_with(|| {
-                let offset = self.static_offset;
-                self.static_offset += s_len;
-                offset
-            });
-            let header_offset = self.static_offset;
-            self.static_offset += 12; // ptr, len, cap
-            header_offset
-        })
+        // 既に登録されていれば、そのオフセットを返す
+        if let Some(header_offset) = self.string_headers.get(s) {
+            return *header_offset;
+        }
+
+        // --- 新しい文字列なので、データとヘッダの両方をアロケートする ---
+
+        let s_len = s.len() as u32;
+
+        // 1. データ領域を確保
+        let data_offset = self.static_offset;
+        self.static_offset += s_len;
+        // 次の確保が4バイト境界から始まるように調整
+        if self.static_offset % 4 != 0 {
+            self.static_offset += 4 - (self.static_offset % 4);
+        }
+
+        // 2. ヘッダ領域を確保
+        let header_offset = self.static_offset;
+        self.static_offset += 12; // ptr(4) + len(4) + cap(4)
+
+        // 3. マップにオフセットを記録
+        self.string_data.insert(s.clone(), data_offset);
+        self.string_headers.insert(s.clone(), header_offset);
+
+        header_offset
     }
 }

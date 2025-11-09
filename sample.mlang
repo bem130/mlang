@@ -1,10 +1,94 @@
-fn main() {
-    let my_number = 12345;
-    let num_as_string = i32_to_string(my_number);
-    let message = string_concat("The number is: ", num_as_string);
-    print(message);
+// mylangの全機能を紹介するサンプルプログラム
 
-    // 負の数と0のテスト
-    print(string_concat("A negative number: ", i32_to_string(-987)));
-    print(string_concat("Zero: ", i32_to_string(0)));
+// --- 1. 関数定義、再帰、if式 ---
+// S式スタイルの呼び出しとif式（条件部は数式ブロック）を使って
+// フィボナッチ数を計算する再帰関数です。
+fn fib(n: i32) -> i32 {
+    if $n <= 1$ {
+        // ifのthen節。nが1以下の場合はnをそのまま返す。
+        n
+    } else {
+        // ifのelse節。ブロックを使い、複数の処理を記述できます。
+        // 再帰呼び出しにより、2つ前の項までの和を計算します。
+        let a = fib($n - 1$);
+        let b = fib($n - 2$);
+        
+        // ブロックの最後の式が、このブロック全体の戻り値になります。
+        $a + b$
+    }
+}
+
+// --- main関数: プログラムのエントリーポイント ---
+// 戻り値がない場合は `-> ()` と明記するか、省略できます。
+fn main() {
+    println("--- mylang 機能ショーケース ---");
+    println(""); // 空行を出力
+
+    // --- 2. let束縛と組み込み関数 (i32_to_string, string_concat) ---
+    let target_num = 9;
+    
+    // C-styleの関数呼び出し `string_concat(...)` も利用可能です。
+    println(string_concat("フィボナッチ数の計算 (n = ", i32_to_string(target_num)));
+
+    // S式スタイルでの関数呼び出し
+    let fib_result = fib target_num;
+    let result_msg = string_concat("  結果: fib(9) = ", i32_to_string(fib_result));
+    println(result_msg);
+    println("");
+
+    // --- 3. Prattパーサーによる中置記法の数式ブロック ($...$) ---
+    println("--- 中置記法の数式ブロック ($...$) ---");
+    let x = 10;
+    // 演算子の優先順位 (* が + より優先) が正しく評価されます。
+    let math_result = $x * (5 + 2) - 30 / 3$; // 10 * 7 - 10 = 60
+    
+    // 複数の組み込み関数をネストして呼び出します。
+    println(
+        string_concat(
+            "  計算結果: 10 * (5 + 2) - 30 / 3 = ",
+            i32_to_string(math_result)
+        )
+    );
+    println("");
+
+    // --- 4. if式の結果を変数に束縛 ---
+    println("--- if式とbool型 ---");
+    // 数式ブロック内で比較演算子を使うと、結果はbool型になります。
+    let is_fib_large = $fib_result > 30$;
+
+    // ifは値を返す「式」なので、その結果をletで変数に束縛できます。
+    let size_description = if is_fib_large {
+        "大きい"
+    } else {
+        "小さい"
+    };
+
+    println(string_concat("  fib(9)は30より大きいですか？ -> ", size_description));
+    println("");
+
+    // --- 5. print と println の使い分け ---
+    println("--- print と println ---");
+    print("このメッセージは 'print' で出力されました。");
+    print("改行は追加されません。");
+    println(""); // printlnで改行を挿入
+    println("このメッセージは 'println' なので、末尾に改行が追加されます。");
+    println("");
+
+    // --- 6. スコープと変数のシャドーイング ---
+    println("--- スコープとシャドーイング ---");
+    let outer_var = "私はmainスコープの変数です。";
+    {
+        // 内側のスコープから外側の変数を参照できます。
+        println(string_concat("  ブロック内: ", outer_var));
+        
+        // 内側のスコープで同名の変数を定義すると、外側の変数は「隠され」ます（シャドーイング）。
+        let outer_var = "シャドーイング！内側のスコープでは私が見えます。";
+        println(string_concat("  ブロック内: ", outer_var));
+    };
+    
+    // ブロックを抜けると、シャドーイングされていた元の変数に戻ります。
+    println(string_concat("  ブロック後: ", outer_var));
+    println("");
+
+    println("--- ショーケースは以上です！ ---");
 }

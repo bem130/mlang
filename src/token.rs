@@ -10,6 +10,7 @@ pub enum Token {
     True,
     False,
     Print,
+    Println,
 
     // Identifier and Literals
     Identifier(String),
@@ -55,6 +56,7 @@ impl Token {
             "true" => Some(Token::True),
             "false" => Some(Token::False),
             "print" => Some(Token::Print),
+            "println" => Some(Token::Println),
             _ => None,
         }
     }
