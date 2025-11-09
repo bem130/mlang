@@ -36,6 +36,11 @@ pub enum RawAstNode {
         statements: Vec<RawAstNode>,
         span: Span,
     },
+    // print文
+    PrintStmt {
+        value: Box<RawAstNode>,
+        span: Span,
+    }
 }
 
 // RawAstNode::Exprを構成する部品
@@ -83,6 +88,7 @@ pub enum MathAstNode {
 pub enum LiteralValue {
     I32(i64),
     F64(f64),
+    Bool(bool),
 }
 
 // 2パス目の意味解析・型チェックを経て生成される、意味が確定した構文木
@@ -96,6 +102,7 @@ pub struct TypedAstNode {
 #[derive(Debug, Clone)]
 pub enum TypedNodeKind {
     Literal(LiteralValue),
+    StringLiteral { header_offset: u32 },
     VariableRef(String),
     LetBinding {
         name: String,
@@ -113,6 +120,9 @@ pub enum TypedNodeKind {
     Block {
         statements: Vec<TypedAstNode>,
     },
+    PrintStmt {
+        value: Box<TypedAstNode>,
+    },
 }
 
 // プログラム内で扱われるデータ型
@@ -120,7 +130,8 @@ pub enum TypedNodeKind {
 pub enum DataType {
     I32,
     F64,
-    // 将来的に追加: Bool, String, etc.
+    Bool,
+    String,
     Unit, // 値を返さないことを示す型
 }
 
@@ -130,7 +141,9 @@ impl fmt::Display for DataType {
         match self {
             DataType::I32 => write!(f, "i32"),
             DataType::F64 => write!(f, "f64"),
-            DataType::Unit => write!(f, "unit"),
+            DataType::Bool => write!(f, "bool"),
+            DataType::String => write!(f, "string"),
+            DataType::Unit => write!(f, "()"),
         }
     }
 }
@@ -144,6 +157,7 @@ impl RawAstNode {
             RawAstNode::LetDef { span, .. } => *span,
             RawAstNode::IfExpr { span, .. } => *span,
             RawAstNode::Block { span, .. } => *span,
+            RawAstNode::PrintStmt { span, .. } => *span,
         }
     }
 }

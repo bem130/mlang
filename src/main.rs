@@ -4,9 +4,9 @@ use clap::Parser;
 use minilang::compile_source;
 use std::{
     fs,
-    io::{self, Read},
+    io::{self, Read, Write},
 };
-use wasmi::{Engine, Linker, Module, Store, Value};
+use wasmi::{core::Trap, Caller, Engine, Linker, Module, Store};
 
 /// コマンドライン引数を定義するための構造体
 #[derive(Parser, Debug)]
@@ -24,29 +24,73 @@ struct Cli {
 fn run_wasm(wat_code: &str) -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::default();
     let mut store = Store::new(&engine, ());
+    let mut linker = <Linker<()>>::new(&engine);
+
+    // WASIのfd_writeをホスト側で実装する
+    linker.func_wrap(
+        "wasi_snapshot_preview1",
+        "fd_write",
+        |mut caller: Caller<'_, ()>,
+         fd: i32,
+         iovecs_ptr: i32,
+         iovecs_len: i32,
+         nwritten_ptr: i32|
+         -> Result<i32, Trap> {
+            let memory = caller
+                .get_export("memory")
+                .and_then(|ext| ext.into_memory())
+                .ok_or_else(|| Trap::new("failed to find memory export"))?;
+
+            // stdout(1)とstderr(2)以外はサポートしない
+            if fd != 1 && fd != 2 {
+                const ERRNO_NOTSUP: i32 = 58; // wasi::ERRNO_NOTSUP.raw()
+                return Ok(ERRNO_NOTSUP);
+            }
+            
+            let mut written_bytes: u32 = 0;
+            let iovecs_ptr = iovecs_ptr as u32;
+
+            for i in 0..iovecs_len {
+                let iovec_offset = (iovecs_ptr + (i * 8) as u32) as usize;
+                
+                // iovecからbufのポインタを読み込む
+                let mut buf_ptr_bytes = [0u8; 4];
+                memory.read(&caller, iovec_offset, &mut buf_ptr_bytes).map_err(|_| Trap::new("pointer out of bounds"))?;
+                let buf_ptr = u32::from_le_bytes(buf_ptr_bytes);
+
+                // iovecからbufの長さを読み込む
+                let mut buf_len_bytes = [0u8; 4];
+                memory.read(&caller, iovec_offset + 4, &mut buf_len_bytes).map_err(|_| Trap::new("pointer out of bounds"))?;
+                let buf_len = u32::from_le_bytes(buf_len_bytes);
+
+                // メモリからデータを読み込んで標準出力に書き込む
+                let data = memory.data(&caller).get(buf_ptr as usize..(buf_ptr + buf_len) as usize).ok_or_else(|| Trap::new("pointer out of bounds"))?;
+                
+                io::stdout().write_all(data).map_err(|_| Trap::new("failed to write to stdout"))?;
+                written_bytes += buf_len;
+            }
+
+            // 書き込んだバイト数をメモリに書き戻す
+            memory.write(&mut caller, nwritten_ptr as usize, &written_bytes.to_le_bytes()).map_err(|_| Trap::new("pointer out of bounds"))?;
+            
+            const ERRNO_SUCCESS: i32 = 0; // wasi::ERRNO_SUCCESS.raw()
+            Ok(ERRNO_SUCCESS)
+        },
+    )?;
 
     let wasm_binary = wat::parse_str(wat_code)?;
-
     let module = Module::new(&engine, &*wasm_binary)?;
-
-    let linker = <Linker<()>>::new(&engine);
     let instance = linker.instantiate(&mut store, &module)?.start(&mut store)?;
 
-    let execute_func = instance
-        .get_func(&store, "execute")
-        .ok_or("Wasmモジュールに関数 'execute' が見つかりません")?;
+    // WASIでは_start関数がエントリーポイント
+    let start_func = instance
+        .get_func(&store, "_start")
+        .ok_or("Wasmモジュールに関数 '_start' が見つかりません")?;
 
-    // 仕様により、コンパイラは'main'関数の戻り値を常にi32としてWATを生成する。
-    // そのため、実行環境は戻り値がi32であることを常に期待する。
-    let mut result_buffer = [Value::I32(0)];
-    execute_func.call(&mut store, &[], &mut result_buffer)?;
+    // _startは引数も戻り値もない
+    start_func.call(&mut store, &[], &mut [])?;
     
-    if let Some(Value::I32(val)) = result_buffer.first() {
-        println!("実行結果: {}", val);
-    } else {
-        // このケースはwasmiのAPIが期待通りに動作すれば到達しないはず
-        return Err("実行時エラー: Wasmからの戻り値の取得に失敗しました。".into());
-    }
+    println!("\n実行が正常に終了しました。");
 
     Ok(())
 }

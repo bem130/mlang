@@ -54,7 +54,6 @@ impl<'a> Lexer<'a> {
             '$' => Ok(Some((Token::Dollar, span))),
             ':' => Ok(Some((Token::Colon, span))),
             ',' => Ok(Some((Token::Comma, span))),
-            '=' => Ok(Some((Token::Equals, span))),
             ';' => Ok(Some((Token::Semicolon, span))),
             '+' => Ok(Some((Token::Plus, span))),
             '-' if self.peek() == Some(&'>') => {
@@ -64,6 +63,44 @@ impl<'a> Lexer<'a> {
             '-' => Ok(Some((Token::Minus, span))),
             '*' => Ok(Some((Token::Star, span))),
             '/' => Ok(Some((Token::Slash, span))),
+
+            // 1文字 or 2文字の演算子
+            '=' => {
+                if self.peek() == Some(&'=') {
+                    self.next_char();
+                    Ok(Some((Token::EqualsEquals, span)))
+                } else {
+                    Ok(Some((Token::Equals, span)))
+                }
+            }
+            '!' => {
+                if self.peek() == Some(&'=') {
+                    self.next_char();
+                    Ok(Some((Token::BangEquals, span)))
+                } else {
+                    Err(format!("Unexpected character: {} at {}", char, span))
+                }
+            }
+            '<' => {
+                if self.peek() == Some(&'=') {
+                    self.next_char();
+                    Ok(Some((Token::LessThanEquals, span)))
+                } else {
+                    Ok(Some((Token::LessThan, span)))
+                }
+            }
+            '>' => {
+                if self.peek() == Some(&'=') {
+                    self.next_char();
+                    Ok(Some((Token::GreaterThanEquals, span)))
+                } else {
+                    Ok(Some((Token::GreaterThan, span)))
+                }
+            }
+            
+            // 文字列リテラル
+            '"' => Ok(Some((self.consume_string()?, span))),
+
             // 数値リテラル
             '0'..='9' => Ok(Some((self.consume_number(char), span))),
             // 識別子 or キーワード
@@ -92,6 +129,22 @@ impl<'a> Lexer<'a> {
             if *c == '\n' { break; }
             self.next_char();
         }
+    }
+    
+    fn consume_string(&mut self) -> Result<Token, String> {
+        let mut s = String::new();
+        while let Some(c) = self.peek() {
+            if *c == '"' {
+                break;
+            }
+            s.push(self.next_char().unwrap());
+        }
+        
+        if self.peek().is_none() {
+            return Err("Unterminated string literal".to_string());
+        }
+        self.next_char(); // `"` を消費
+        Ok(Token::StringLiteral(s))
     }
 
     fn consume_number(&mut self, first: char) -> Token {

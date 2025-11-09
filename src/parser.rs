@@ -95,11 +95,16 @@ impl Parser {
             }
             
             // それ以外の場合は、文の区切りとしてセミコロンを要求する
-            self.consume(Token::Semicolon)?;
-
-            // オプショナルなセミコロンを許容する (例: `let a = 1;;`)
-            while self.peek() == Some(&Token::Semicolon) {
-                self.advance();
+            if self.check_and_consume(Token::Semicolon) {
+                // オプショナルなセミコロンを許容する (例: `let a = 1;;`)
+                while self.peek() == Some(&Token::Semicolon) {
+                    self.advance();
+                }
+            } else {
+                // ブロックの最後の式（セミコロンなし）の直後が } でない場合はエラー
+                if self.peek() != Some(&Token::RBrace) {
+                    return Err(ParseError::new("Expected semicolon or '}' after statement", self.peek_span()).into());
+                }
             }
         }
 
@@ -111,13 +116,24 @@ impl Parser {
         })
     }
     
-    /// 1つの文 (`let` または 式) をパースする (セミコロンは消費しない)
+    /// 1つの文 (`let`, `if`, `print` または 式) をパースする
     fn parse_statement(&mut self) -> Result<RawAstNode, LangError> {
-        if self.peek() == Some(&Token::Let) {
-            self.parse_let_def()
-        } else {
-            self.parse_expression()
+        match self.peek() {
+            Some(Token::Let) => self.parse_let_def(),
+            Some(Token::Print) => self.parse_print_stmt(),
+            _ => self.parse_expression(),
         }
+    }
+    
+    /// `print <expression>` 文をパースする
+    fn parse_print_stmt(&mut self) -> Result<RawAstNode, LangError> {
+        let start_span = self.consume(Token::Print)?.1;
+        let value = self.parse_expression()?;
+        let end_span = value.span();
+        Ok(RawAstNode::PrintStmt {
+            value: Box::new(value),
+            span: combine_spans(start_span, end_span)
+        })
     }
 
     /// let束縛 `let name = ...` をパースする
@@ -136,13 +152,51 @@ impl Parser {
         })
     }
 
-    /// 式 (S式やリテラルなど) をパースする
+    /// 式をパースする。式の種類(if式かS式か)を判別して適切なパーサーに委譲する
     fn parse_expression(&mut self) -> Result<RawAstNode, LangError> {
+        match self.peek() {
+            Some(Token::If) => self.parse_if_expr(),
+            _ => self.parse_sexpression(),
+        }
+    }
+
+    /// `if <cond> { ... } else { ... }` 式をパースする
+    fn parse_if_expr(&mut self) -> Result<RawAstNode, LangError> {
+        let start_span = self.consume(Token::If)?.1;
+        let condition = self.parse_expression()?;
+        let then_branch = self.parse_block()?;
+        
+        let else_branch = if self.check_and_consume(Token::Else) {
+            // `else if ...` は `else` の後に続く式として解釈する
+            // `else {` の場合はブロックとして解釈する
+            if self.peek() == Some(&Token::LBrace) {
+                self.parse_block()?
+            } else {
+                self.parse_expression()?
+            }
+        } else {
+             // elseがない場合、Unitを返す空のブロックを生成する
+            let dummy_span = self.peek_span();
+            RawAstNode::Block { statements: vec![], span: dummy_span }
+        };
+
+        let end_span = else_branch.span();
+
+        Ok(RawAstNode::IfExpr {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch: Box::new(else_branch),
+            span: combine_spans(start_span, end_span)
+        })
+    }
+
+    /// S式（S-expression）をパースする
+    fn parse_sexpression(&mut self) -> Result<RawAstNode, LangError> {
         let mut parts = Vec::new();
-        // 式の終わりは、セミコロン、閉じブレース、閉じ括弧など
+        // 式の終わりは、文脈を区切るトークン
         while !self.is_at_end() {
             match self.peek() {
-                Some(Token::Semicolon) | Some(Token::RBrace) | Some(Token::RParen) => break,
+                Some(Token::Semicolon) | Some(Token::RBrace) | Some(Token::LBrace) | Some(Token::RParen) | Some(Token::Else) => break,
                 _ => parts.push(self.parse_expr_part()?),
             }
         }
@@ -161,7 +215,7 @@ impl Parser {
             .peek_full()
             .ok_or_else(|| ParseError::new("Unexpected end of file", self.peek_span()))?;
         match token {
-            Token::IntLiteral(_) | Token::FloatLiteral(_) | Token::Identifier(_) => {
+            Token::IntLiteral(_) | Token::FloatLiteral(_) | Token::StringLiteral(_) | Token::Identifier(_) | Token::True | Token::False => {
                 let (t, s) = self.advance();
                 Ok(RawExprPart::Token(t, s))
             }
@@ -233,8 +287,10 @@ impl Parser {
     /// 中置演算子の優先順位を返す
     fn get_infix_precedence(&self) -> u8 {
         match self.peek() {
-            Some(Token::Plus) | Some(Token::Minus) => 1,
-            Some(Token::Star) | Some(Token::Slash) => 2,
+            Some(Token::EqualsEquals) | Some(Token::BangEquals) | Some(Token::LessThan)
+            | Some(Token::LessThanEquals) | Some(Token::GreaterThan) | Some(Token::GreaterThanEquals) => 1,
+            Some(Token::Plus) | Some(Token::Minus) => 2,
+            Some(Token::Star) | Some(Token::Slash) => 3,
             _ => 0,
         }
     }

@@ -7,11 +7,15 @@ pub enum Token {
     Let,
     If,
     Else,
+    True,
+    False,
+    Print,
 
     // Identifier and Literals
     Identifier(String),
     IntLiteral(i64),
     FloatLiteral(f64),
+    StringLiteral(String),
 
     // Symbols
     LParen,   // (
@@ -30,6 +34,14 @@ pub enum Token {
     Minus,    // -
     Star,     // *
     Slash,    // /
+
+    // Comparison Operators
+    EqualsEquals,   // ==
+    BangEquals,     // !=
+    LessThan,       // <
+    LessThanEquals, // <=
+    GreaterThan,    // >
+    GreaterThanEquals, // >=
 }
 
 impl Token {
@@ -40,6 +52,9 @@ impl Token {
             "let" => Some(Token::Let),
             "if" => Some(Token::If),
             "else" => Some(Token::Else),
+            "true" => Some(Token::True),
+            "false" => Some(Token::False),
+            "print" => Some(Token::Print),
             _ => None,
         }
     }
