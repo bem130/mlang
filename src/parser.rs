@@ -41,7 +41,12 @@ impl Parser {
         let name_token = self.consume_identifier()?;
         let name = (name_token.0.clone(), name_token.1);
 
-        self.consume(Token::LParen)?;
+        // 【修正点】関数定義の `(` は LParen と CallLParen の両方を許容する
+        if self.peek() == Some(&Token::LParen) {
+            self.consume(Token::LParen)?;
+        } else {
+            self.consume(Token::CallLParen)?;
+        }
 
         // パラメータのパース
         let mut params = Vec::new();
@@ -155,9 +160,22 @@ impl Parser {
         // 式の終わりは、文脈を区切るトークン
         while !self.is_at_end() {
             match self.peek() {
-                // カンマはC-style呼び出しの引数区切りなので、S式を終了させる
+                // 式の区切りならループを終了
                 Some(Token::Comma) | Some(Token::Semicolon) | Some(Token::RBrace) | Some(Token::LBrace) | Some(Token::RParen) | Some(Token::Else) => break,
-                _ => parts.push(self.parse_expr_part()?),
+                _ => {}
+            }
+
+            // 式の部品を1つパースする
+            let part = self.parse_expr_part()?;
+            parts.push(part);
+
+            // 【LL(1)ロジック】今パースしたのがIdentifierで、次にCallLParenが続くなら、それはC-style呼び出しの一部
+            if let Some(RawExprPart::Token(Token::Identifier(_), _)) = parts.last() {
+                if self.peek() == Some(&Token::CallLParen) {
+                    // C-styleの引数リストをパースしてpartsに追加する
+                    let args_part = self.parse_c_style_args()?;
+                    parts.push(args_part);
+                }
             }
         }
         if parts.is_empty() {
@@ -169,44 +187,27 @@ impl Parser {
         Ok(RawAstNode::Expr(parts))
     }
 
-    /// 式の構成要素（トークン、グループ、数式ブロックなど）を1つパースする
+    /// 式の構成要素（トークン、グループ、数式ブロックなど）を1つパースする。
+    /// この関数は常に1つの`RawExprPart`だけを返し、LL(1)の原則に従う。
     fn parse_expr_part(&mut self) -> Result<RawExprPart, LangError> {
         let (token, span) = self
             .peek_full()
             .ok_or_else(|| ParseError::new("Unexpected end of file", self.peek_span()))?;
         match token {
-            Token::IntLiteral(_) | Token::FloatLiteral(_) | Token::StringLiteral(_) | Token::Identifier(_) | Token::True | Token::False => {
+            // Identifierとリテラルは、単にトークンとして消費するだけ
+            Token::Identifier(_) | Token::IntLiteral(_) | Token::FloatLiteral(_) | Token::StringLiteral(_) | Token::True | Token::False => {
                 let (t, s) = self.advance();
                 Ok(RawExprPart::Token(t, s))
             }
             Token::Dollar => self.parse_math_block(),
-            Token::LParen => {
-                let (_, lparen_span) = self.peek_full().unwrap().clone();
-                let mut is_c_style = false;
-
-                // mylangの構文の核となるルール: 識別子と'('の間に空白があるかどうかで、
-                // C-style呼び出し `f(...)` とS式グループ `( ... )` を区別する。
-                // ここではトークンのスパン情報を直接比較して、隣接しているかを判定する。
-                if self.position > 0 {
-                    let (prev_token, prev_span) = &self.tokens[self.position - 1];
-                    if let Token::Identifier(ident) = prev_token {
-                        // 識別子の終わりの位置を計算
-                        let ident_end_column = prev_span.column + ident.len();
-                        // 識別子と `(` が同じ行にあり、間に空白がないかチェック
-                        if prev_span.line == lparen_span.line && ident_end_column == lparen_span.column {
-                            is_c_style = true;
-                        }
-                    }
-                }
-
-                if is_c_style {
-                    self.parse_c_style_args()
-                } else {
-                    self.parse_s_expr_group()
-                }
-            },
+            // `LParen` は常にS式グループの開始
+            Token::LParen => self.parse_s_expr_group(),
             Token::Colon => self.parse_type_annotation(),
             Token::If => self.parse_if_as_part(),
+            // CallLParenは `parse_sexpression` の中で処理されるため、ここに来たらエラー
+            Token::CallLParen => {
+                Err(ParseError::new("Unexpected token: C-style parenthesis cannot start an expression part.", *span).into())
+            }
             _ => {
                 Err(ParseError::new(format!("Unexpected token in expression: {:?}", token), *span)
                     .into())
@@ -268,7 +269,8 @@ impl Parser {
 
     /// `(...)` C-style呼び出しの引数リストをパースする
     fn parse_c_style_args(&mut self) -> Result<RawExprPart, LangError> {
-        let start_span = self.consume(Token::LParen)?.1;
+        // この関数が呼ばれるとき、次のトークンは `CallLParen` であることが保証されている
+        let start_span = self.consume(Token::CallLParen)?.1;
         let mut args = Vec::new();
 
         if self.peek() != Some(&Token::RParen) {
@@ -315,14 +317,14 @@ impl Parser {
                     self.advance(); // 識別子を消費
                     // 数式ブロック内では、トップレベルのパーサーとは異なり、識別子の次に'('があれば、
                     // 間に空白があってもC-style呼び出しとみなす。
-                    if self.peek() == Some(&Token::LParen) {
+                    if self.peek() == Some(&Token::LParen) || self.peek() == Some(&Token::CallLParen) {
                         self.parse_math_call(name, span)?
                     } else {
                         MathAstNode::Variable(name, span)
                     }
                 }
-                Token::LParen => {
-                    self.consume(Token::LParen)?; // '(' を消費
+                Token::LParen | Token::CallLParen => {
+                    self.advance(); // '(' を消費
                     let expr = self.parse_math_expression(0)?; // 内側の式をパース
                     self.consume(Token::RParen)?; // ')' を消費
                     expr
@@ -356,7 +358,13 @@ impl Parser {
 
     /// 数式内の関数呼び出し `name(...)` をパースする
     fn parse_math_call(&mut self, name: String, name_span: Span) -> Result<MathAstNode, LangError> {
-        self.consume(Token::LParen)?;
+        // 【修正点】数式ブロック内の `(` も LParen と CallLParen の両方を許容する
+        if self.peek() == Some(&Token::LParen) { 
+            self.consume(Token::LParen)?; 
+        } else { 
+            self.consume(Token::CallLParen)?; 
+        }
+
         let mut args = Vec::new();
 
         if self.peek() != Some(&Token::RParen) {

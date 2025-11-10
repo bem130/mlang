@@ -10,6 +10,9 @@ pub struct Lexer<'a> {
     input: Peekable<Chars<'a>>,
     line: usize,
     column: usize,
+    /// 直前に生成したトークンが識別子やリテラルの一部だったかを示すフラグ。
+    /// これにより、`ident()`と`ident ()`を区別する。
+    last_char_was_ident_part: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -19,6 +22,7 @@ impl<'a> Lexer<'a> {
             input: input.chars().peekable(),
             line: 1,
             column: 1,
+            last_char_was_ident_part: false,
         }
     }
 
@@ -39,37 +43,64 @@ impl<'a> Lexer<'a> {
         let Some(char) = self.next_char() else { return Ok(None) };
 
         match char {
-            // 空白や改行はスキップ
-            c if c.is_whitespace() => Ok(None),
+            // 空白や改行はスキップし、識別子フラグをリセットする
+            c if c.is_whitespace() => {
+                self.last_char_was_ident_part = false;
+                Ok(None)
+            }
             // コメントは行末までスキップ
             '/' if self.peek() == Some(&'/') => {
                 self.consume_line_comment();
+                self.last_char_was_ident_part = false;
                 Ok(None)
             }
-            // シンボル
-            '(' => Ok(Some((Token::LParen, span))),
-            ')' => Ok(Some((Token::RParen, span))),
-            '{' => Ok(Some((Token::LBrace, span))),
-            '}' => Ok(Some((Token::RBrace, span))),
-            '$' => Ok(Some((Token::Dollar, span))),
-            ':' => Ok(Some((Token::Colon, span))),
-            ',' => Ok(Some((Token::Comma, span))),
-            ';' => Ok(Some((Token::Semicolon, span))),
-            '+' => Ok(Some((Token::Plus, span))),
+            // --- '()' のコンテキスト判断 ---
+            '(' => {
+                let token = if self.last_char_was_ident_part {
+                    Token::CallLParen
+                } else {
+                    Token::LParen
+                };
+                self.last_char_was_ident_part = false; // `(`自体は識別子の一部ではない
+                Ok(Some((token, span)))
+            }
+            // シンボルは識別子フラグをリセットする
+            ')' | '{' | '}' | '$' | ':' | ',' | ';' | '+' | '*' | '/' => {
+                self.last_char_was_ident_part = false;
+                let token = match char {
+                    ')' => Token::RParen,
+                    '{' => Token::LBrace,
+                    '}' => Token::RBrace,
+                    '$' => Token::Dollar,
+                    ':' => Token::Colon,
+                    ',' => Token::Comma,
+                    ';' => Token::Semicolon,
+                    '+' => Token::Plus,
+                    '*' => Token::Star,
+                    '/' => Token::Slash,
+                    _ => unreachable!(),
+                };
+                Ok(Some((token, span)))
+            }
+            
+            // 複数文字の可能性があるシンボル
             '-' if self.peek() == Some(&'>') => {
                 self.next_char(); // '>'を消費
+                self.last_char_was_ident_part = false;
                 Ok(Some((Token::Arrow, span)))
             }
-            // `-` の後に数字が続く場合は、負の数リテラルとして扱う
             '-' if self.peek().map_or(false, |c| c.is_ascii_digit()) => {
-                Ok(Some((self.consume_number(char), span)))
+                let token = self.consume_number(char);
+                self.last_char_was_ident_part = true;
+                Ok(Some((token, span)))
             }
-            '-' => Ok(Some((Token::Minus, span))),
-            '*' => Ok(Some((Token::Star, span))),
-            '/' => Ok(Some((Token::Slash, span))),
-
-            // 1文字 or 2文字の演算子
+            '-' => {
+                self.last_char_was_ident_part = false;
+                Ok(Some((Token::Minus, span)))
+            }
+            
             '=' => {
+                self.last_char_was_ident_part = false;
                 if self.peek() == Some(&'=') {
                     self.next_char();
                     Ok(Some((Token::EqualsEquals, span)))
@@ -78,6 +109,7 @@ impl<'a> Lexer<'a> {
                 }
             }
             '!' => {
+                self.last_char_was_ident_part = false;
                 if self.peek() == Some(&'=') {
                     self.next_char();
                     Ok(Some((Token::BangEquals, span)))
@@ -86,6 +118,7 @@ impl<'a> Lexer<'a> {
                 }
             }
             '<' => {
+                self.last_char_was_ident_part = false;
                 if self.peek() == Some(&'=') {
                     self.next_char();
                     Ok(Some((Token::LessThanEquals, span)))
@@ -94,6 +127,7 @@ impl<'a> Lexer<'a> {
                 }
             }
             '>' => {
+                self.last_char_was_ident_part = false;
                 if self.peek() == Some(&'=') {
                     self.next_char();
                     Ok(Some((Token::GreaterThanEquals, span)))
@@ -102,13 +136,23 @@ impl<'a> Lexer<'a> {
                 }
             }
             
-            // 文字列リテラル
-            '"' => Ok(Some((self.consume_string()?, span))),
-
-            // 数値リテラル
-            '0'..='9' => Ok(Some((self.consume_number(char), span))),
-            // 識別子 or キーワード
-            c if is_ident_start(c) => Ok(Some((self.consume_identifier(char), span))),
+            // リテラルや識別子はフラグをセットする
+            '"' => {
+                let token = self.consume_string()?;
+                self.last_char_was_ident_part = true;
+                Ok(Some((token, span)))
+            }
+            '0'..='9' => {
+                let token = self.consume_number(char);
+                self.last_char_was_ident_part = true;
+                Ok(Some((token, span)))
+            }
+            c if is_ident_start(c) => {
+                let token = self.consume_identifier(char);
+                self.last_char_was_ident_part = true;
+                Ok(Some((token, span)))
+            }
+            
             _ => Err(format!("Unexpected character: {} at {}", char, span)),
         }
     }

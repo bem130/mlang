@@ -17,7 +17,8 @@ pub enum Token {
     StringLiteral(String),
 
     // Symbols
-    LParen,   // (
+    LParen,   // ( (S式グループ用)
+    CallLParen, // ( (C-style呼び出し用)
     RParen,   // )
     LBrace,   // {
     RBrace,   // }
