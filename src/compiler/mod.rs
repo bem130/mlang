@@ -38,6 +38,7 @@ pub struct FunctionSignature {
 impl Compiler {
     pub fn new() -> Self {
         let mut function_table = HashMap::new();
+        // --- 標準組み込み関数を登録 ---
         function_table.insert(
             "string_concat".to_string(),
             FunctionSignature {
@@ -62,6 +63,23 @@ impl Compiler {
                 definition_span: Span::default(),
             },
         );
+        function_table.insert(
+            "print".to_string(),
+            FunctionSignature {
+                param_types: vec![DataType::String],
+                return_type: DataType::Unit,
+                definition_span: Span::default(),
+            },
+        );
+        function_table.insert(
+            "println".to_string(),
+            FunctionSignature {
+                param_types: vec![DataType::String],
+                return_type: DataType::Unit,
+                definition_span: Span::default(),
+            },
+        );
+
 
         let mut compiler = Self {
             wat_buffer: String::new(),
@@ -152,6 +170,10 @@ impl Compiler {
                     Some(rt) => self.string_to_type(&rt.0, rt.1)?,
                     None => DataType::Unit,
                 };
+                if self.function_table.contains_key(func_name) {
+                    // 組み込み関数は上書きできない
+                     return Err(LangError::Compile(CompileError::new(format!("Function '{}' is a built-in function and cannot be redefined", func_name), name.1)));
+                }
                 self.function_table.insert(func_name.clone(), FunctionSignature { param_types, return_type: ret_type, definition_span: *span });
             }
         }

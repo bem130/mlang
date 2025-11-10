@@ -29,16 +29,6 @@ pub enum RawAstNode {
         statements: Vec<RawAstNode>,
         span: Span,
     },
-    // print文
-    PrintStmt {
-        value: Box<RawAstNode>,
-        span: Span,
-    },
-    // println文
-    PrintlnStmt {
-        value: Box<RawAstNode>,
-        span: Span,
-    }
 }
 
 /// `RawAstNode::Expr`を構成する、意味が未解決の部品。
@@ -150,12 +140,6 @@ pub enum TypedExprKind {
     Block {
         statements: Vec<TypedExpr>,
     },
-    PrintStmt {
-        value: Box<TypedExpr>,
-    },
-    PrintlnStmt {
-        value: Box<TypedExpr>,
-    },
 }
 
 // プログラム内で扱われるデータ型
@@ -189,8 +173,6 @@ impl RawAstNode {
             RawAstNode::FnDef { span, .. } => *span,
             RawAstNode::LetDef { span, .. } => *span,
             RawAstNode::Block { span, .. } => *span,
-            RawAstNode::PrintStmt { span, .. } => *span,
-            RawAstNode::PrintlnStmt { span, .. } => *span,
         }
     }
 }

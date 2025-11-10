@@ -122,26 +122,6 @@ pub fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedE
                 data_type: last_type, span: block_span,
             })
         }
-        RawAstNode::PrintStmt { value, span } => {
-            let typed_value = analyze_expr(compiler, value)?;
-            if typed_value.data_type != DataType::String {
-                return Err(LangError::Compile(CompileError::new(format!("'print' expects a string, but found type '{}'", typed_value.data_type), typed_value.span)));
-            }
-            Ok(TypedExpr {
-                kind: TypedExprKind::PrintStmt { value: Box::new(typed_value) },
-                data_type: DataType::Unit, span: *span,
-            })
-        }
-        RawAstNode::PrintlnStmt { value, span } => {
-            let typed_value = analyze_expr(compiler, value)?;
-            if typed_value.data_type != DataType::String {
-                return Err(LangError::Compile(CompileError::new(format!("'println' expects a string, but found type '{}'", typed_value.data_type), typed_value.span)));
-            }
-            Ok(TypedExpr {
-                kind: TypedExprKind::PrintlnStmt { value: Box::new(typed_value) },
-                data_type: DataType::Unit, span: *span,
-            })
-        }
         RawAstNode::FnDef { .. } => unreachable!("Function definitions cannot be nested inside expressions."),
     }
 }
@@ -176,82 +156,90 @@ fn analyze_statement_with_hoisting(compiler: &mut Compiler, node: &RawAstNode, h
      }
 }
 
+/// `f(...)` 形式のC-style関数呼び出しを解決する。
+fn resolve_c_style_call<'a>(compiler: &mut Compiler, name: &str, span: crate::span::Span, arg_nodes: &[RawAstNode], parts: &mut &'a [RawExprPart]) -> Result<TypedExpr, LangError> {
+    let signature = compiler.function_table.get(name).cloned().ok_or_else(|| LangError::Compile(CompileError::new(format!("Undefined function '{}'", name), span)))?;
+    if arg_nodes.len() != signature.param_types.len() {
+        return Err(LangError::Compile(
+            CompileError::new(
+                format!("Function '{}' expects {} arguments, but {} were provided", name, signature.param_types.len(), arg_nodes.len()),
+                span
+            ).with_note(
+                format!("'{}' is defined here", name),
+                signature.definition_span
+            )
+        ));
+    }
+    
+    let mut typed_args = Vec::new();
+    for (i, arg_node) in arg_nodes.iter().enumerate() {
+        let typed_arg = analyze_expr(compiler, arg_node)?;
+        if typed_arg.data_type != signature.param_types[i] { 
+            return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name, signature.param_types[i], typed_arg.data_type), typed_arg.span))); 
+        }
+        typed_args.push(typed_arg);
+    }
+    
+    // 呼び出し元のスライスから、消費した識別子とCStyleArgsの2つ分を進める
+    *parts = &parts[2..];
+    
+    Ok(TypedExpr { kind: TypedExprKind::FunctionCall { name: name.to_string(), args: typed_args }, data_type: signature.return_type.clone(), span })
+}
+
+/// S式 `f ...` または変数参照 `f` を解決する。
+fn resolve_sexp_call_or_variable<'a>(compiler: &mut Compiler, name: &str, span: crate::span::Span, parts: &mut &'a [RawExprPart], hoisted_vars: &HashSet<String>) -> Result<TypedExpr, LangError> {
+    // 呼び出し元のスライスから、消費した識別子1つ分を進める
+    *parts = &parts[1..];
+    
+    // 1. 変数として解決できるか試す
+    if hoisted_vars.contains(name) || compiler.find_variable(name).is_some() {
+        if let Some((original_name, unique_name, var_type, _)) = compiler.find_variable(name) {
+            return Ok(TypedExpr { kind: TypedExprKind::VariableRef{ name: original_name.clone(), unique_name: unique_name.clone() }, data_type: var_type.clone(), span });
+        } else {
+            return Err(LangError::Compile(CompileError::new(format!("Cannot read local variable '{}' in its own initializer", name), span)));
+        }
+    }
+    // 2. 関数として解決できるか試す
+    if let Some(signature) = compiler.function_table.get(name).cloned() {
+        let mut typed_args = Vec::new();
+        for i in 0..signature.param_types.len() {
+             if parts.is_empty() {
+                 return Err(LangError::Compile(
+                    CompileError::new(
+                        format!("Function '{}' expects {} arguments, but only {} were provided", name, signature.param_types.len(), i),
+                        span
+                    ).with_note(
+                        format!("'{}' is defined here", name),
+                        signature.definition_span
+                    )
+                 ));
+             }
+            let typed_arg = analyze_sexp_from_slice(compiler, parts, hoisted_vars)?;
+            if typed_arg.data_type != signature.param_types[i] { return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name, signature.param_types[i], typed_arg.data_type), typed_arg.span))); }
+            typed_args.push(typed_arg);
+        }
+        return Ok(TypedExpr { kind: TypedExprKind::FunctionCall { name: name.to_string(), args: typed_args }, data_type: signature.return_type.clone(), span });
+    }
+    // 3. どちらでもない場合は未定義エラー
+    Err(LangError::Compile(CompileError::new(format!("Undefined function or variable '{}'", name), span)))
+}
+
 /// RawExprPartのスライスから一つの意味のある式(TypedExpr)を解析する。
 /// この関数はアナライザーの心臓部であり、パーサーが作った未解決の構造を解釈する。
-/// - 先頭の要素が識別子の場合:
-///   - 後続が`CStyleArgs`なら、C-style関数呼び出しとして解決を試みる。
-///   - そうでなければ、変数参照 or S式関数呼び出しとして解決を試みる。
-/// - 先頭の要素がリテラルや`Group`, `MathBlock`などの場合、それを評価する。
 /// 解析が成功すると、消費した分だけ入力スライスを進め、結果のTypedExprを返す。
 fn analyze_sexp_from_slice<'a>(compiler: &mut Compiler, parts: &mut &'a [RawExprPart], hoisted_vars: &HashSet<String>) -> Result<TypedExpr, LangError> {
     if parts.is_empty() { return Err(LangError::Compile(CompileError::new("Unexpected end of expression", Default::default()))); }
+    
     let first_part = &parts[0];
-    // S式の場合はこの時点でスライスを進めない。C-style呼び出しかどうかで分岐してから進める。
-
+    
     match first_part {
         RawExprPart::Token(Token::Identifier(name), span) => {
-            // --- 名前解決ロジック ---
-            // C-style `add(...)`呼び出しかどうかをチェック
+            // C-style `f(...)`呼び出しかどうかをチェック
             if let Some(RawExprPart::CStyleArgs(arg_nodes, _)) = parts.get(1) {
-                *parts = &parts[2..]; // `add`と`CStyleArgs`を消費
-                
-                let signature = compiler.function_table.get(name).cloned().ok_or_else(|| LangError::Compile(CompileError::new(format!("Undefined function '{}'", name), *span)))?;
-                if arg_nodes.len() != signature.param_types.len() {
-                    return Err(LangError::Compile(
-                        CompileError::new(
-                            format!("Function '{}' expects {} arguments, but {} were provided", name, signature.param_types.len(), arg_nodes.len()),
-                            *span
-                        ).with_note(
-                            format!("'{}' is defined here", name),
-                            signature.definition_span
-                        )
-                    ));
-                }
-                
-                let mut typed_args = Vec::new();
-                for (i, arg_node) in arg_nodes.iter().enumerate() {
-                    let typed_arg = analyze_expr(compiler, arg_node)?;
-                    if typed_arg.data_type != signature.param_types[i] { 
-                        return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name, signature.param_types[i], typed_arg.data_type), typed_arg.span))); 
-                    }
-                    typed_args.push(typed_arg);
-                }
-                return Ok(TypedExpr { kind: TypedExprKind::FunctionCall { name: name.clone(), args: typed_args }, data_type: signature.return_type.clone(), span: *span });
+                resolve_c_style_call(compiler, name, *span, arg_nodes, parts)
+            } else {
+                resolve_sexp_call_or_variable(compiler, name, *span, parts, hoisted_vars)
             }
-
-            // --- S式スタイルの解析 ---
-            *parts = &parts[1..]; // `add`などの関数名を消費
-            // 1. 変数として解決できるか試す
-            if hoisted_vars.contains(name) || compiler.find_variable(name).is_some() {
-                if let Some((original_name, unique_name, var_type, _)) = compiler.find_variable(name) {
-                    return Ok(TypedExpr { kind: TypedExprKind::VariableRef{ name: original_name.clone(), unique_name: unique_name.clone() }, data_type: var_type.clone(), span: *span });
-                } else {
-                    return Err(LangError::Compile(CompileError::new(format!("Cannot read local variable '{}' in its own initializer", name), *span)));
-                }
-            }
-            // 2. 関数として解決できるか試す
-            if let Some(signature) = compiler.function_table.get(name).cloned() {
-                let mut typed_args = Vec::new();
-                for i in 0..signature.param_types.len() {
-                     if parts.is_empty() {
-                         return Err(LangError::Compile(
-                            CompileError::new(
-                                format!("Function '{}' expects {} arguments, but only {} were provided", name, signature.param_types.len(), i),
-                                *span
-                            ).with_note(
-                                format!("'{}' is defined here", name),
-                                signature.definition_span
-                            )
-                         ));
-                     }
-                    let typed_arg = analyze_sexp_from_slice(compiler, parts, hoisted_vars)?;
-                    if typed_arg.data_type != signature.param_types[i] { return Err(LangError::Compile(CompileError::new(format!("Mismatched type for argument {} of function '{}': expected '{}', but found '{}'", i + 1, name, signature.param_types[i], typed_arg.data_type), typed_arg.span))); }
-                    typed_args.push(typed_arg);
-                }
-                return Ok(TypedExpr { kind: TypedExprKind::FunctionCall { name: name.clone(), args: typed_args }, data_type: signature.return_type.clone(), span: *span });
-            }
-            // 3. どちらでもない場合は未定義エラー
-            Err(LangError::Compile(CompileError::new(format!("Undefined function or variable '{}'", name), *span)))
         }
         RawExprPart::Token(token, span) => {
             *parts = &parts[1..]; // トークンを消費

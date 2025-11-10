@@ -36,6 +36,24 @@ pub fn generate(compiler: &mut Compiler, node: &TypedAstNode) -> Result<(), Lang
     Ok(())
 }
 
+/// スタックのトップにある文字列（へのポインタ）を標準出力に書き出すWATコードを生成する。
+fn generate_print_logic(compiler: &mut Compiler) {
+    compiler.wat_buffer.push_str("    local.set $__print_temp\n");
+    compiler.wat_buffer.push_str("    i32.const 0 ;; iovec[0].buf\n");
+    compiler.wat_buffer.push_str("    local.get $__print_temp\n");
+    compiler.wat_buffer.push_str("    i32.load offset=0 ;; load data_ptr from header\n");
+    compiler.wat_buffer.push_str("    i32.store\n");
+    compiler.wat_buffer.push_str("    i32.const 4 ;; iovec[0].buf_len\n");
+    compiler.wat_buffer.push_str("    local.get $__print_temp\n");
+    compiler.wat_buffer.push_str("    i32.load offset=4 ;; load data_len from header\n");
+    compiler.wat_buffer.push_str("    i32.store\n");
+    compiler.wat_buffer.push_str("    i32.const 1   ;; fd (1=stdout)\n");
+    compiler.wat_buffer.push_str("    i32.const 0   ;; iovecs_ptr\n");
+    compiler.wat_buffer.push_str("    i32.const 1   ;; iovecs_len\n");
+    compiler.wat_buffer.push_str("    i32.const 16  ;; nwritten_ptr\n");
+    compiler.wat_buffer.push_str("    call $fd_write\n    drop\n");
+}
+
 fn generate_expr(compiler: &mut Compiler, node: &TypedExpr) -> Result<(), LangError> {
     match &node.kind {
         TypedExprKind::Literal(val) => {
@@ -59,6 +77,7 @@ fn generate_expr(compiler: &mut Compiler, node: &TypedExpr) -> Result<(), LangEr
                  compiler.wat_buffer.push_str(&format!("    ;; Call: {}\n", name));
             }
 
+            // --- 組み込み関数の特別処理 ---
             match name.as_str() {
                 "string_concat" => {
                     generate_expr(compiler, &args[0])?;
@@ -71,15 +90,31 @@ fn generate_expr(compiler: &mut Compiler, node: &TypedExpr) -> Result<(), LangEr
                     compiler.wat_buffer.push_str("    call $__i32_to_string\n");
                     return Ok(());
                 }
+                "print" => {
+                    generate_expr(compiler, &args[0])?;
+                    generate_print_logic(compiler);
+                    return Ok(());
+                }
+                "println" => {
+                    // First: print the actual value.
+                    generate_expr(compiler, &args[0])?;
+                    generate_print_logic(compiler);
+                    // Second: print the newline character.
+                    let newline_header_offset = compiler.ensure_string_is_statically_allocated(&"\n".to_string());
+                    compiler.wat_buffer.push_str(&format!("    i32.const {} ;; newline string header\n", newline_header_offset));
+                    generate_print_logic(compiler);
+                    return Ok(());
+                }
                 _ => {}
             }
             
+            // --- 通常の関数呼び出し ---
             for arg in args {
                 generate_expr(compiler, arg)?;
             }
-            if name.contains('.') {
+            if name.contains('.') { // 中置演算子
                 compiler.wat_buffer.push_str(&format!("    {}\n", name));
-            } else {
+            } else { // ユーザー定義 or その他の組み込み関数
                 compiler.wat_buffer.push_str(&format!("    call ${}\n", name));
             }
         }
@@ -119,62 +154,6 @@ fn generate_expr(compiler: &mut Compiler, node: &TypedExpr) -> Result<(), LangEr
                 }
             }
         }
-        TypedExprKind::PrintStmt { value } => {
-            compiler.wat_buffer.push_str("    ;; print\n");
-            generate_expr(compiler, value)?;
-            compiler.wat_buffer.push_str("    local.set $__print_temp\n");
-            compiler.wat_buffer.push_str("    i32.const 0 ;; iovec[0].buf\n");
-            compiler.wat_buffer.push_str("    local.get $__print_temp\n");
-            compiler.wat_buffer.push_str("    i32.load offset=0 ;; load data_ptr from header\n");
-            compiler.wat_buffer.push_str("    i32.store\n");
-            compiler.wat_buffer.push_str("    i32.const 4 ;; iovec[0].buf_len\n");
-            compiler.wat_buffer.push_str("    local.get $__print_temp\n");
-            compiler.wat_buffer.push_str("    i32.load offset=4 ;; load data_len from header\n");
-            compiler.wat_buffer.push_str("    i32.store\n");
-            compiler.wat_buffer.push_str("    i32.const 1   ;; fd (1=stdout)\n");
-            compiler.wat_buffer.push_str("    i32.const 0   ;; iovecs_ptr\n");
-            compiler.wat_buffer.push_str("    i32.const 1   ;; iovecs_len\n");
-            compiler.wat_buffer.push_str("    i32.const 16  ;; nwritten_ptr\n");
-            compiler.wat_buffer.push_str("    call $fd_write\n    drop\n");
-        }
-        TypedExprKind::PrintlnStmt { value } => {
-            compiler.wat_buffer.push_str("    ;; println (implemented as two separate prints for portability)\n");
-
-            // First: print the actual value.
-            generate_expr(compiler, value)?;
-            compiler.wat_buffer.push_str("    local.set $__print_temp\n");
-            compiler.wat_buffer.push_str("    i32.const 0 ;; iovec[0].buf\n");
-            compiler.wat_buffer.push_str("    local.get $__print_temp\n");
-            compiler.wat_buffer.push_str("    i32.load offset=0 ;; load data_ptr from header\n");
-            compiler.wat_buffer.push_str("    i32.store\n");
-            compiler.wat_buffer.push_str("    i32.const 4 ;; iovec[0].buf_len\n");
-            compiler.wat_buffer.push_str("    local.get $__print_temp\n");
-            compiler.wat_buffer.push_str("    i32.load offset=4 ;; load data_len from header\n");
-            compiler.wat_buffer.push_str("    i32.store\n");
-            compiler.wat_buffer.push_str("    i32.const 1   ;; fd (1=stdout)\n");
-            compiler.wat_buffer.push_str("    i32.const 0   ;; iovecs_ptr\n");
-            compiler.wat_buffer.push_str("    i32.const 1   ;; iovecs_len\n");
-            compiler.wat_buffer.push_str("    i32.const 16  ;; nwritten_ptr\n");
-            compiler.wat_buffer.push_str("    call $fd_write\n    drop\n");
-
-            // Second: print the newline character.
-            let newline_header_offset = compiler.ensure_string_is_statically_allocated(&"\n".to_string());
-            compiler.wat_buffer.push_str(&format!("    i32.const {} ;; newline string header\n", newline_header_offset));
-            compiler.wat_buffer.push_str("    local.set $__print_temp\n");
-            compiler.wat_buffer.push_str("    i32.const 0 ;; iovec[0].buf\n");
-            compiler.wat_buffer.push_str("    local.get $__print_temp\n");
-            compiler.wat_buffer.push_str("    i32.load offset=0 ;; load data_ptr from header\n");
-            compiler.wat_buffer.push_str("    i32.store\n");
-            compiler.wat_buffer.push_str("    i32.const 4 ;; iovec[0].buf_len\n");
-            compiler.wat_buffer.push_str("    local.get $__print_temp\n");
-            compiler.wat_buffer.push_str("    i32.load offset=4 ;; load data_len from header\n");
-            compiler.wat_buffer.push_str("    i32.store\n");
-            compiler.wat_buffer.push_str("    i32.const 1   ;; fd (1=stdout)\n");
-            compiler.wat_buffer.push_str("    i32.const 0   ;; iovecs_ptr\n");
-            compiler.wat_buffer.push_str("    i32.const 1   ;; iovecs_len\n");
-            compiler.wat_buffer.push_str("    i32.const 16  ;; nwritten_ptr\n");
-            compiler.wat_buffer.push_str("    call $fd_write\n    drop\n");
-        }
     }
     Ok(())
 }
@@ -184,13 +163,18 @@ fn body_uses_print(expr: &TypedExpr) -> bool {
     fn find_prints(expr: &TypedExpr, uses: &mut bool) {
         if *uses { return; }
         match &expr.kind {
-            TypedExprKind::PrintStmt {..} | TypedExprKind::PrintlnStmt {..} => { *uses = true; },
+            TypedExprKind::FunctionCall { name, args, .. } => {
+                if name == "print" || name == "println" {
+                    *uses = true;
+                    // Note: We don't return early, as args might also contain prints.
+                }
+                for arg in args { find_prints(arg, uses); }
+            }
             TypedExprKind::LetBinding { value, .. } => find_prints(value, uses),
             TypedExprKind::IfExpr { condition, then_branch, else_branch, .. } => {
                 find_prints(condition, uses); find_prints(then_branch, uses); find_prints(else_branch, uses);
             }
             TypedExprKind::Block { statements, .. } => { for stmt in statements { find_prints(stmt, uses); } }
-            TypedExprKind::FunctionCall { args, .. } => { for arg in args { find_prints(arg, uses); } }
             _ => {}
         }
     }
@@ -230,7 +214,7 @@ pub fn collect_and_declare_locals(compiler: &mut Compiler, typed_body: &TypedExp
     if !locals.is_empty() {
         compiler.wat_buffer.push_str("    ;; Local variables\n");
         for (unique_name, data_type) in locals {
-            // 【修正点】Unit型の変数はWasmのローカル変数として宣言しない
+            // Unit型の変数はWasmのローカル変数として宣言しない
             if data_type != DataType::Unit {
                 compiler.wat_buffer.push_str(&format!("    (local ${} {})\n", unique_name, compiler.type_to_wat(&data_type)));
             }
@@ -243,88 +227,6 @@ pub fn collect_and_declare_locals(compiler: &mut Compiler, typed_body: &TypedExp
 }
 
 pub fn generate_builtin_helpers(compiler: &mut Compiler) {
-    compiler.wat_buffer.push_str("\n  ;; --- Built-in Helper Functions ---\n");
-    // --- __alloc (simple bump allocator) ---
-    compiler.wat_buffer.push_str("  ;; Allocates memory by incrementing a heap pointer.\n");
-    compiler.wat_buffer.push_str("  ;; Does not implement freeing.\n");
-    compiler.wat_buffer.push_str("  (func $__alloc (param $size i32) (result i32)\n");
-    compiler.wat_buffer.push_str("    global.get $heap_ptr         ;; Return current heap pointer\n");
-    compiler.wat_buffer.push_str("    global.get $heap_ptr         ;; Push heap pointer again to calculate next\n");
-    compiler.wat_buffer.push_str("    local.get $size\n");
-    compiler.wat_buffer.push_str("    i32.add\n");
-    compiler.wat_buffer.push_str("    global.set $heap_ptr         ;; Update heap pointer\n");
-    compiler.wat_buffer.push_str("  )\n");
-    
-    // --- __string_concat ---
-    compiler.wat_buffer.push_str("\n  ;; Concatenates two strings, returns a new string.\n");
-    compiler.wat_buffer.push_str("  (func $__string_concat (param $s1_header_ptr i32) (param $s2_header_ptr i32) (result i32)\n");
-    compiler.wat_buffer.push_str("    (local $s1_data_ptr i32) (local $s1_len i32)\n");
-    compiler.wat_buffer.push_str("    (local $s2_data_ptr i32) (local $s2_len i32)\n");
-    compiler.wat_buffer.push_str("    (local $new_len i32) (local $new_cap i32)\n");
-    compiler.wat_buffer.push_str("    (local $new_data_ptr i32) (local $new_header_ptr i32)\n");
-    compiler.wat_buffer.push_str("    local.get $s1_header_ptr\n    i32.load offset=0\n    local.set $s1_data_ptr\n");
-    compiler.wat_buffer.push_str("    local.get $s1_header_ptr\n    i32.load offset=4\n    local.set $s1_len\n");
-    compiler.wat_buffer.push_str("    local.get $s2_header_ptr\n    i32.load offset=0\n    local.set $s2_data_ptr\n");
-    compiler.wat_buffer.push_str("    local.get $s2_header_ptr\n    i32.load offset=4\n    local.set $s2_len\n");
-    compiler.wat_buffer.push_str("    local.get $s1_len\n    local.get $s2_len\n    i32.add\n    local.set $new_len\n");
-    compiler.wat_buffer.push_str("    local.get $new_len\n    i32.const 2\n    i32.mul\n    local.set $new_cap\n");
-    compiler.wat_buffer.push_str("    local.get $new_cap\n    call $__alloc\n    local.set $new_data_ptr\n");
-    compiler.wat_buffer.push_str("    i32.const 12\n    call $__alloc\n    local.set $new_header_ptr\n");
-    compiler.wat_buffer.push_str("    local.get $new_data_ptr\n    local.get $s1_data_ptr\n    local.get $s1_len\n    memory.copy\n");
-    compiler.wat_buffer.push_str("    local.get $new_data_ptr\n    local.get $s1_len\n    i32.add\n");
-    compiler.wat_buffer.push_str("    local.get $s2_data_ptr\n    local.get $s2_len\n    memory.copy\n");
-    compiler.wat_buffer.push_str("    local.get $new_header_ptr\n    local.get $new_data_ptr\n    i32.store offset=0\n");
-    compiler.wat_buffer.push_str("    local.get $new_header_ptr\n    local.get $new_len\n    i32.store offset=4\n");
-    compiler.wat_buffer.push_str("    local.get $new_header_ptr\n    local.get $new_cap\n    i32.store offset=8\n");
-    compiler.wat_buffer.push_str("    local.get $new_header_ptr\n");
-    compiler.wat_buffer.push_str("  )\n");
-
-    // --- __i32_to_string ---
-    compiler.wat_buffer.push_str("\n  ;; Converts an i32 to a new string.\n");
-    compiler.wat_buffer.push_str("  (func $__i32_to_string (param $n i32) (result i32)\n");
-    compiler.wat_buffer.push_str("    (local $is_neg i32) (local $len i32) (local $temp_ptr i32) (local $write_ptr i32)\n");
-    compiler.wat_buffer.push_str("    (local $char_ptr i32) (local $cap i32) (local $header_ptr i32) (local $i i32)\n");
-    compiler.wat_buffer.push_str("    i32.const 16\n    call $__alloc\n    local.set $temp_ptr ;; Temp buffer for reversed digits\n");
-    compiler.wat_buffer.push_str("    local.get $temp_ptr\n    local.set $write_ptr\n");
-    compiler.wat_buffer.push_str("    local.get $n\n    i32.const 0\n    i32.lt_s\n    local.set $is_neg\n");
-    compiler.wat_buffer.push_str("    local.get $is_neg\n    if\n");
-    compiler.wat_buffer.push_str("      local.get $n\n      i32.const -1\n      i32.mul\n      local.set $n\n");
-    compiler.wat_buffer.push_str("    end\n");
-    compiler.wat_buffer.push_str("    local.get $n\n    i32.const 0\n    i32.eq\n    if\n");
-    compiler.wat_buffer.push_str("      local.get $write_ptr\n      i32.const 48 ;; '0'\n      i32.store8\n");
-    compiler.wat_buffer.push_str("      local.get $write_ptr\n      i32.const 1\n      i32.add\n      local.set $write_ptr\n");
-    compiler.wat_buffer.push_str("    else\n");
-    compiler.wat_buffer.push_str("      (loop $digits\n");
-    compiler.wat_buffer.push_str("        local.get $write_ptr\n");
-    compiler.wat_buffer.push_str("        local.get $n\n        i32.const 10\n        i32.rem_u\n");
-    compiler.wat_buffer.push_str("        i32.const 48\n        i32.add\n");
-    compiler.wat_buffer.push_str("        i32.store8\n");
-    compiler.wat_buffer.push_str("        local.get $write_ptr\n        i32.const 1\n        i32.add\n        local.set $write_ptr\n");
-    compiler.wat_buffer.push_str("        local.get $n\n        i32.const 10\n        i32.div_u\n        local.set $n\n");
-    compiler.wat_buffer.push_str("        local.get $n\n        i32.const 0\n        i32.ne\n");
-    compiler.wat_buffer.push_str("        br_if $digits\n");
-    compiler.wat_buffer.push_str("      )\n");
-    compiler.wat_buffer.push_str("    end\n");
-    compiler.wat_buffer.push_str("    local.get $is_neg\n    if\n");
-    compiler.wat_buffer.push_str("      local.get $write_ptr\n      i32.const 45 ;; '-'\n      i32.store8\n");
-    compiler.wat_buffer.push_str("      local.get $write_ptr\n      i32.const 1\n      i32.add\n      local.set $write_ptr\n");
-    compiler.wat_buffer.push_str("    end\n");
-    compiler.wat_buffer.push_str("    local.get $write_ptr\n    local.get $temp_ptr\n    i32.sub\n    local.set $len\n");
-    compiler.wat_buffer.push_str("    local.get $len\n    local.set $cap\n");
-    compiler.wat_buffer.push_str("    local.get $cap\n    call $__alloc\n    local.set $char_ptr ;; Final buffer for correct-order string\n");
-    compiler.wat_buffer.push_str("    (loop $reverse\n");
-    compiler.wat_buffer.push_str("      local.get $char_ptr\n      local.get $i\n      i32.add\n");
-    compiler.wat_buffer.push_str("      local.get $write_ptr\n      local.get $i\n      i32.sub\n      i32.const 1\n      i32.sub\n");
-    compiler.wat_buffer.push_str("      i32.load8_u\n");
-    compiler.wat_buffer.push_str("      i32.store8\n");
-    compiler.wat_buffer.push_str("      local.get $i\n      i32.const 1\n      i32.add\n      local.set $i\n");
-    compiler.wat_buffer.push_str("      local.get $i\n      local.get $len\n      i32.lt_s\n");
-    compiler.wat_buffer.push_str("      br_if $reverse\n");
-    compiler.wat_buffer.push_str("    )\n");
-    compiler.wat_buffer.push_str("    i32.const 12\n    call $__alloc\n    local.set $header_ptr\n");
-    compiler.wat_buffer.push_str("    local.get $header_ptr\n    local.get $char_ptr\n    i32.store offset=0\n");
-    compiler.wat_buffer.push_str("    local.get $header_ptr\n    local.get $len\n    i32.store offset=4\n");
-    compiler.wat_buffer.push_str("    local.get $header_ptr\n    local.get $cap\n    i32.store offset=8\n");
-    compiler.wat_buffer.push_str("    local.get $header_ptr\n");
-    compiler.wat_buffer.push_str("  )\n");
+    let builtins_wat = include_str!("builtins.wat");
+    compiler.wat_buffer.push_str(builtins_wat);
 }

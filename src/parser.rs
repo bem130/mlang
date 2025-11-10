@@ -116,36 +116,12 @@ impl Parser {
         })
     }
     
-    /// 1つの文 (`let`, `if`, `print`, `{}` または 式) をパースする
+    /// 1つの文 (`let`, `{}` または 式) をパースする
     fn parse_statement(&mut self) -> Result<RawAstNode, LangError> {
         match self.peek() {
             Some(Token::Let) => self.parse_let_def(),
-            Some(Token::Print) => self.parse_print_stmt(),
-            Some(Token::Println) => self.parse_println_stmt(),
             _ => self.parse_expression(),
         }
-    }
-    
-    /// `print <expression>` 文をパースする
-    fn parse_print_stmt(&mut self) -> Result<RawAstNode, LangError> {
-        let start_span = self.consume(Token::Print)?.1;
-        let value = self.parse_expression()?;
-        let end_span = value.span();
-        Ok(RawAstNode::PrintStmt {
-            value: Box::new(value),
-            span: combine_spans(start_span, end_span)
-        })
-    }
-
-    /// `println <expression>` 文をパースする
-    fn parse_println_stmt(&mut self) -> Result<RawAstNode, LangError> {
-        let start_span = self.consume(Token::Println)?.1;
-        let value = self.parse_expression()?;
-        let end_span = value.span();
-        Ok(RawAstNode::PrintlnStmt {
-            value: Box::new(value),
-            span: combine_spans(start_span, end_span)
-        })
     }
 
     /// let束縛 `let name = ...` をパースする
