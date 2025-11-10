@@ -1,11 +1,22 @@
 [package]
 name = "mylang-cli"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
+# --- 必須の依存関係 ---
 mylang-core = { path = "../mylang-core" }
-clap = { version = "4.4", features = ["derive"] }
-wasmi = "0.31.2"
-wat = "1.205.1"
+mylang-wasm-codegen = { path = "../mylang-wasm-codegen" }
+
+clap = { version = "4.5", features = ["derive"] }
+wasmi = "0.31"
+wat = "1.240"
 thiserror = { workspace = true }
+
+# --- オプショナルな依存関係 ---
+# "llvm"フィーチャーが有効な時だけ、この依存関係が追加される
+mylang-llvm-codegen = { path = "../mylang-llvm-codegen", optional = true }
+
+[features]
+# "llvm" フィーチャーを定義
+llvm = ["dep:mylang-llvm-codegen"]

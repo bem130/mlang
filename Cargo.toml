@@ -2,8 +2,8 @@
 resolver = "2"
 members = [
     "mylang-core",
-    "mylang-cli",
+    "mylang-cli", "mylang-wasm-codegen", "mylang-llvm-codegen",
 ]
 
 [workspace.dependencies]
-thiserror = { version = "1.0", default-features = false }
+thiserror = { version = "2.0", default-features = false }

@@ -1,0 +1,9 @@
+[package]
+name = "mylang-llvm-codegen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mylang-core = { path = "../mylang-core" }
+thiserror = { workspace = true, default-features = false }
+# inkwell = { version = "0.6.0", features = ["llvm17-0"] }

@@ -1,7 +1,7 @@
 //! RawASTを意味解析・型チェックし、TypedASTに変換するアナライザー。
 
 extern crate alloc;
-use super::Compiler;
+use super::Analyzer;
 use crate::ast::*;
 use crate::error::{CompileError, LangError};
 use crate::token::Token;
@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 
 /// トップレベルのRawAstNodeを型付きASTに変換するエントリーポイント
 pub fn analyze_toplevel(
-    compiler: &mut Compiler,
+    analyzer: &mut Analyzer,
     node: &RawAstNode,
 ) -> Result<TypedAstNode, LangError> {
     match node {
@@ -25,26 +25,26 @@ pub fn analyze_toplevel(
             return_type,
             span,
         } => {
-            compiler.var_counters.clear();
-            compiler.enter_scope();
+            analyzer.var_counters.clear();
+            analyzer.enter_scope();
             let mut typed_params = Vec::new();
             for ((param_name, _), (type_name, type_span)) in params {
-                let param_type = compiler.string_to_type(type_name, *type_span)?;
+                let param_type = analyzer.string_to_type(type_name, *type_span)?;
                 // パラメータも変数テーブルに追加
-                compiler.variable_table.push((
+                analyzer.variable_table.push((
                     param_name.clone(),
                     param_name.clone(),
                     param_type.clone(),
-                    compiler.scope_depth,
+                    analyzer.scope_depth,
                 ));
                 typed_params.push((param_name.clone(), param_type));
             }
 
-            let typed_body = analyze_expr(compiler, body)?;
+            let typed_body = analyze_expr(analyzer, body)?;
 
             let mut original_return_type = return_type
                 .as_ref()
-                .map_or(Ok(DataType::Unit), |rt| compiler.string_to_type(&rt.0, rt.1))?;
+                .map_or(Ok(DataType::Unit), |rt| analyzer.string_to_type(&rt.0, rt.1))?;
 
             if name.0 == "main" && original_return_type != DataType::Unit {
                 return Err(LangError::Compile(CompileError::new(
@@ -67,7 +67,7 @@ pub fn analyze_toplevel(
                 }
             }
 
-            compiler.leave_scope();
+            analyzer.leave_scope();
 
             if name.0 == "main" {
                 original_return_type = DataType::Unit;
@@ -89,16 +89,16 @@ pub fn analyze_toplevel(
 }
 
 /// RawASTノード（式）を受け取り、意味解析と型チェックを行ってTypedExprを返す
-pub fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedExpr, LangError> {
+pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedExpr, LangError> {
     match node {
         RawAstNode::Expr(parts) => {
             // 式の解析では、現在のスコープで束縛される変数の知識は不要
             let hoisted_vars: BTreeSet<String> = BTreeSet::new();
             let mut parts_slice = &parts[..];
-            let result = analyze_sexp_from_slice(compiler, &mut parts_slice, &hoisted_vars)?;
+            let result = analyze_sexp_from_slice(analyzer, &mut parts_slice, &hoisted_vars)?;
 
             if let Some(RawExprPart::TypeAnnotation(type_name, type_span)) = parts_slice.first() {
-                let expected_type = compiler.string_to_type(type_name, *type_span)?;
+                let expected_type = analyzer.string_to_type(type_name, *type_span)?;
                 if result.data_type != expected_type {
                     return Err(LangError::Compile(CompileError::new(
                         format!(
@@ -126,17 +126,17 @@ pub fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedE
             Ok(result)
         }
         RawAstNode::LetDef { name, value, span } => {
-            let typed_value = analyze_expr(compiler, value)?;
+            let typed_value = analyze_expr(analyzer, value)?;
 
-            let count = compiler.var_counters.entry(name.0.clone()).or_insert(0);
+            let count = analyzer.var_counters.entry(name.0.clone()).or_insert(0);
             let unique_name = format!("{}_{}", name.0, count);
             *count += 1;
 
-            compiler.variable_table.push((
+            analyzer.variable_table.push((
                 name.0.clone(),
                 unique_name.clone(),
                 typed_value.data_type.clone(),
-                compiler.scope_depth,
+                analyzer.scope_depth,
             ));
             Ok(TypedExpr {
                 kind: TypedExprKind::LetBinding {
@@ -148,7 +148,7 @@ pub fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedE
             })
         }
         RawAstNode::Block { statements, span } => {
-            compiler.enter_scope();
+            analyzer.enter_scope();
             // --- Hoisting Pass ---
             let hoisted_vars: BTreeSet<String> = statements
                 .iter()
@@ -163,10 +163,10 @@ pub fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedE
 
             let mut typed_statements = Vec::new();
             for stmt in statements {
-                let typed_stmt = analyze_statement_with_hoisting(compiler, stmt, &hoisted_vars)?;
+                let typed_stmt = analyze_statement_with_hoisting(analyzer, stmt, &hoisted_vars)?;
                 typed_statements.push(typed_stmt);
             }
-            compiler.leave_scope();
+            analyzer.leave_scope();
 
             let last_type = typed_statements
                 .last()
@@ -188,17 +188,17 @@ pub fn analyze_expr(compiler: &mut Compiler, node: &RawAstNode) -> Result<TypedE
 
 /// Blockスコープ内の文を、そのスコープのhoisted変数情報と共に解析するヘルパー
 fn analyze_statement_with_hoisting(
-    compiler: &mut Compiler,
+    analyzer: &mut Analyzer,
     node: &RawAstNode,
     hoisted_vars: &BTreeSet<String>,
 ) -> Result<TypedExpr, LangError> {
     match node {
         RawAstNode::Expr(parts) => {
             let mut parts_slice = &parts[..];
-            let result = analyze_sexp_from_slice(compiler, &mut parts_slice, hoisted_vars)?;
+            let result = analyze_sexp_from_slice(analyzer, &mut parts_slice, hoisted_vars)?;
             // ... (analyze_exprからコピー)
             if let Some(RawExprPart::TypeAnnotation(type_name, type_span)) = parts_slice.first() {
-                let expected_type = compiler.string_to_type(type_name, *type_span)?;
+                let expected_type = analyzer.string_to_type(type_name, *type_span)?;
                 if result.data_type != expected_type {
                     return Err(LangError::Compile(CompileError::new(
                         format!(
@@ -225,19 +225,19 @@ fn analyze_statement_with_hoisting(
             Ok(result)
         }
         // 他のケースは `analyze_expr` をそのまま呼ぶ
-        _ => analyze_expr(compiler, node),
+        _ => analyze_expr(analyzer, node),
     }
 }
 
 /// `f(...)` 形式のC-style関数呼び出しを解決する。
 fn resolve_c_style_call<'a>(
-    compiler: &mut Compiler,
+    analyzer: &mut Analyzer,
     name: &str,
     span: crate::span::Span,
     arg_nodes: &[RawAstNode],
     parts: &mut &'a [RawExprPart],
 ) -> Result<TypedExpr, LangError> {
-    let signature = compiler
+    let signature = analyzer
         .function_table
         .get(name)
         .cloned()
@@ -267,7 +267,7 @@ fn resolve_c_style_call<'a>(
 
     let mut typed_args = Vec::new();
     for (i, arg_node) in arg_nodes.iter().enumerate() {
-        let typed_arg = analyze_expr(compiler, arg_node)?;
+        let typed_arg = analyze_expr(analyzer, arg_node)?;
         if typed_arg.data_type != signature.param_types[i] {
             return Err(LangError::Compile(CompileError::new(
                 format!(
@@ -298,7 +298,7 @@ fn resolve_c_style_call<'a>(
 
 /// S式 `f ...` または変数参照 `f` を解決する。
 fn resolve_sexp_call_or_variable<'a>(
-    compiler: &mut Compiler,
+    analyzer: &mut Analyzer,
     name: &str,
     span: crate::span::Span,
     parts: &mut &'a [RawExprPart],
@@ -308,8 +308,8 @@ fn resolve_sexp_call_or_variable<'a>(
     *parts = &parts[1..];
 
     // 1. 変数として解決できるか試す
-    if hoisted_vars.contains(name) || compiler.find_variable(name).is_some() {
-        if let Some((original_name, unique_name, var_type, _)) = compiler.find_variable(name) {
+    if hoisted_vars.contains(name) || analyzer.find_variable(name).is_some() {
+        if let Some((original_name, unique_name, var_type, _)) = analyzer.find_variable(name) {
             return Ok(TypedExpr {
                 kind: TypedExprKind::VariableRef {
                     name: original_name.clone(),
@@ -326,7 +326,7 @@ fn resolve_sexp_call_or_variable<'a>(
         }
     }
     // 2. 関数として解決できるか試す
-    if let Some(signature) = compiler.function_table.get(name).cloned() {
+    if let Some(signature) = analyzer.function_table.get(name).cloned() {
         let mut typed_args = Vec::new();
         for i in 0..signature.param_types.len() {
             if parts.is_empty() {
@@ -346,7 +346,7 @@ fn resolve_sexp_call_or_variable<'a>(
                     ),
                 ));
             }
-            let typed_arg = analyze_sexp_from_slice(compiler, parts, hoisted_vars)?;
+            let typed_arg = analyze_sexp_from_slice(analyzer, parts, hoisted_vars)?;
             if typed_arg.data_type != signature.param_types[i] {
                 return Err(LangError::Compile(CompileError::new(
                     format!(
@@ -381,7 +381,7 @@ fn resolve_sexp_call_or_variable<'a>(
 /// この関数はアナライザーの心臓部であり、パーサーが作った未解決の構造を解釈する。
 /// 解析が成功すると、消費した分だけ入力スライスを進め、結果のTypedExprを返す。
 fn analyze_sexp_from_slice<'a>(
-    compiler: &mut Compiler,
+    analyzer: &mut Analyzer,
     parts: &mut &'a [RawExprPart],
     hoisted_vars: &BTreeSet<String>,
 ) -> Result<TypedExpr, LangError> {
@@ -398,9 +398,9 @@ fn analyze_sexp_from_slice<'a>(
         RawExprPart::Token(Token::Identifier(name), span) => {
             // C-style `f(...)`呼び出しかどうかをチェック
             if let Some(RawExprPart::CStyleArgs(arg_nodes, _)) = parts.get(1) {
-                resolve_c_style_call(compiler, name, *span, arg_nodes, parts)
+                resolve_c_style_call(analyzer, name, *span, arg_nodes, parts)
             } else {
-                resolve_sexp_call_or_variable(compiler, name, *span, parts, hoisted_vars)
+                resolve_sexp_call_or_variable(analyzer, name, *span, parts, hoisted_vars)
             }
         }
         RawExprPart::Token(token, span) => {
@@ -427,7 +427,7 @@ fn analyze_sexp_from_slice<'a>(
                     span: *span,
                 }),
                 Token::StringLiteral(s) => {
-                    let header_offset = compiler.ensure_string_is_statically_allocated(s);
+                    let header_offset = analyzer.ensure_string_is_statically_allocated(s);
                     Ok(TypedExpr {
                         kind: TypedExprKind::StringLiteral { header_offset },
                         data_type: DataType::String,
@@ -442,12 +442,12 @@ fn analyze_sexp_from_slice<'a>(
         }
         RawExprPart::MathBlock(math_node, _) => {
             *parts = &parts[1..];
-            analyze_math_node(compiler, math_node)
+            analyze_math_node(analyzer, math_node)
         }
         RawExprPart::Group(inner_parts, _) => {
             *parts = &parts[1..];
             let mut inner_slice = &inner_parts[..];
-            let result = analyze_sexp_from_slice(compiler, &mut inner_slice, &BTreeSet::new())?; // Group内は別スコープ
+            let result = analyze_sexp_from_slice(analyzer, &mut inner_slice, &BTreeSet::new())?; // Group内は別スコープ
             if !inner_slice.is_empty() {
                 return Err(LangError::Compile(CompileError::new(
                     "Unexpected tokens after expression in group",
@@ -463,7 +463,7 @@ fn analyze_sexp_from_slice<'a>(
             span,
         } => {
             *parts = &parts[1..];
-            let typed_cond = analyze_expr(compiler, condition)?;
+            let typed_cond = analyze_expr(analyzer, condition)?;
             if typed_cond.data_type != DataType::Bool {
                 return Err(LangError::Compile(CompileError::new(
                     format!(
@@ -473,8 +473,8 @@ fn analyze_sexp_from_slice<'a>(
                     typed_cond.span,
                 )));
             }
-            let typed_then = analyze_expr(compiler, then_branch)?;
-            let typed_else = analyze_expr(compiler, else_branch)?;
+            let typed_then = analyze_expr(analyzer, then_branch)?;
+            let typed_else = analyze_expr(analyzer, else_branch)?;
             if typed_then.data_type != typed_else.data_type {
                 return Err(LangError::Compile(CompileError::new(
                     format!(
@@ -507,7 +507,7 @@ fn analyze_sexp_from_slice<'a>(
 }
 
 /// 数式ノードの解析ロジック
-fn analyze_math_node(compiler: &mut Compiler, node: &MathAstNode) -> Result<TypedExpr, LangError> {
+fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<TypedExpr, LangError> {
     match node {
         MathAstNode::Literal(literal, span) => match literal {
             MathLiteral::Int(val) => Ok(TypedExpr {
@@ -522,7 +522,7 @@ fn analyze_math_node(compiler: &mut Compiler, node: &MathAstNode) -> Result<Type
             }),
         },
         MathAstNode::Variable(name, span) => {
-            if let Some((original_name, unique_name, var_type, _)) = compiler.find_variable(name) {
+            if let Some((original_name, unique_name, var_type, _)) = analyzer.find_variable(name) {
                 Ok(TypedExpr {
                     kind: TypedExprKind::VariableRef {
                         name: original_name.clone(),
@@ -544,8 +544,8 @@ fn analyze_math_node(compiler: &mut Compiler, node: &MathAstNode) -> Result<Type
             right,
             span,
         } => {
-            let typed_left = analyze_math_node(compiler, left)?;
-            let typed_right = analyze_math_node(compiler, right)?;
+            let typed_left = analyze_math_node(analyzer, left)?;
+            let typed_right = analyze_math_node(analyzer, right)?;
             if typed_left.data_type != typed_right.data_type {
                 return Err(LangError::Compile(CompileError::new(
                     format!(
@@ -589,7 +589,7 @@ fn analyze_math_node(compiler: &mut Compiler, node: &MathAstNode) -> Result<Type
         }
         MathAstNode::Call { name, args, span } => {
             let signature =
-                compiler
+                analyzer
                     .function_table
                     .get(&name.0)
                     .cloned()
@@ -618,7 +618,7 @@ fn analyze_math_node(compiler: &mut Compiler, node: &MathAstNode) -> Result<Type
             let mut typed_args = Vec::new();
             for (i, arg_node) in args.iter().enumerate() {
                 // 引数がRawAstNodeになったので、メインの`analyze_expr`で解析する
-                let typed_arg = analyze_expr(compiler, arg_node)?;
+                let typed_arg = analyze_expr(analyzer, arg_node)?;
                 let expected_type = &signature.param_types[i];
                 if typed_arg.data_type != *expected_type {
                     return Err(LangError::Compile(CompileError::new(

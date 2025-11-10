@@ -1,0 +1,8 @@
+[package]
+name = "mylang-wasm-codegen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mylang-core = { path = "../mylang-core" }
+thiserror = { workspace = true, default-features = false }
