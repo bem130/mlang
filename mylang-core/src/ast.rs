@@ -1,9 +1,13 @@
 //! パーサーが生成する抽象構文木(AST)のデータ構造を定義します。
 //! RawASTは意味解析前、TypedASTは意味解析・型解決後の構造を表します。
 
+extern crate alloc;
 use crate::span::Span;
 use crate::token::Token;
-use std::fmt;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::fmt;
 
 // 1パス目の構文解析で生成される、未解決の構文木
 #[derive(Debug, PartialEq, Clone)]

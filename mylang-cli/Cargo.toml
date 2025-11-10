@@ -1,0 +1,11 @@
+[package]
+name = "mylang-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mylang-core = { path = "../mylang-core" }
+clap = { version = "4.4", features = ["derive"] }
+wasmi = "0.31.2"
+wat = "1.205.1"
+thiserror = { workspace = true }

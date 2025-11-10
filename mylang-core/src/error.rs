@@ -1,24 +1,38 @@
 //! コンパイル処理中に発生するエラーを定義します。
 
+extern crate alloc;
 use crate::span::Span;
-use thiserror::Error;
-use std::fmt;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::fmt;
 
 /// ライブラリ全体で発生しうるエラーの集約
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum LangError {
-    #[error("Parse Error: {0}")]
-    Parse(#[from] ParseError),
-    #[error("Compile Error: {0}")]
-    Compile(#[from] CompileError),
+    Parse(ParseError),
+    Compile(CompileError),
+}
+
+impl fmt::Display for LangError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LangError::Parse(e) => write!(f, "Parse Error: {}", e),
+            LangError::Compile(e) => write!(f, "Compile Error: {}", e),
+        }
+    }
 }
 
 /// 構文解析エラー
-#[derive(Debug, Error)]
-#[error("{message} at {span}")]
+#[derive(Debug)]
 pub struct ParseError {
     pub message: String,
     pub span: Span,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} at {}", self.message, self.span)
+    }
 }
 
 impl ParseError {
@@ -67,4 +81,16 @@ impl fmt::Display for CompileError {
     }
 }
 
-impl std::error::Error for CompileError {}
+// --- From trait implementations ---
+
+impl From<ParseError> for LangError {
+    fn from(err: ParseError) -> Self {
+        LangError::Parse(err)
+    }
+}
+
+impl From<CompileError> for LangError {
+    fn from(err: CompileError) -> Self {
+        LangError::Compile(err)
+    }
+}

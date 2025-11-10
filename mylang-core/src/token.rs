@@ -1,5 +1,8 @@
 //! 字句解析の結果であるトークンの種類を定義します。
 
+extern crate alloc;
+use alloc::string::String;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     // Keywords
@@ -17,30 +20,30 @@ pub enum Token {
     StringLiteral(String),
 
     // Symbols
-    LParen,   // ( (S式グループ用)
+    LParen,     // ( (S式グループ用)
     CallLParen, // ( (C-style呼び出し用)
-    RParen,   // )
-    LBrace,   // {
-    RBrace,   // }
-    Dollar,   // $
-    Colon,    // :
-    Comma,    // ,
-    Equals,   // =
-    Arrow,    // ->
-    Semicolon,// ;
+    RParen,     // )
+    LBrace,     // {
+    RBrace,     // }
+    Dollar,     // $
+    Colon,      // :
+    Comma,      // ,
+    Equals,     // =
+    Arrow,      // ->
+    Semicolon,  // ;
 
     // Operators
-    Plus,     // +
-    Minus,    // -
-    Star,     // *
-    Slash,    // /
+    Plus,  // +
+    Minus, // -
+    Star,  // *
+    Slash, // /
 
     // Comparison Operators
-    EqualsEquals,   // ==
-    BangEquals,     // !=
-    LessThan,       // <
-    LessThanEquals, // <=
-    GreaterThan,    // >
+    EqualsEquals,      // ==
+    BangEquals,        // !=
+    LessThan,          // <
+    LessThanEquals,    // <=
+    GreaterThan,       // >
     GreaterThanEquals, // >=
 }
 

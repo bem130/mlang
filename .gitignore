@@ -1,5 +1,4 @@
 /target
+/tmp
 out.wasm
 out.wat
-src.txt
-samples.txt

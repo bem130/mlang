@@ -1,7 +1,7 @@
-// src/main.rs
+// mylang-cli/src/main.rs
 
 use clap::Parser;
-use minilang::compile_source;
+use mylang_core::compile_source;
 use std::{
     fs,
     io::{self, Read, Write},

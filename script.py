@@ -63,7 +63,8 @@ def merge_directory_files(src_directory, output_filename):
 
 if __name__ == '__main__':
     # 例1: ./src ディレクトリを src.txt にまとめる
-    merge_directory_files('./src', './src.txt')
+    merge_directory_files('./mylang-cli', './tmp/cli.txt')
+    merge_directory_files('./mylang-core', './tmp/core.txt')
 
     # 例2: ./tests/samples ディレクトリを samples.txt にまとめる
-    merge_directory_files('./tests/samples', './samples.txt')
+    merge_directory_files('./tests/samples', './tmp/samples.txt')

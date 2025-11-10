@@ -1,6 +1,6 @@
 //! ソースコード上の位置(行・列)を表現するためのデータ構造。
 
-use std::fmt;
+use core::fmt;
 
 /// ソースコード上の位置を示す構造体
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

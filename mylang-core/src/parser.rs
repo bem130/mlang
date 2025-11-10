@@ -1,9 +1,15 @@
 //! トークン列を未解決のAST(RawAST)に変換する構文解析器。
 
+extern crate alloc;
 use crate::ast::*;
 use crate::error::{LangError, ParseError};
 use crate::span::{combine_spans, Span};
 use crate::token::Token;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// 構文解析器
 pub struct Parser {
@@ -98,7 +104,7 @@ impl Parser {
             if self.peek() == Some(&Token::RBrace) {
                 break;
             }
-            
+
             // それ以外の場合は、文の区切りとしてセミコロンを要求する
             if self.check_and_consume(Token::Semicolon) {
                 // オプショナルなセミコロンを許容する (例: `let a = 1;;`)
@@ -108,7 +114,11 @@ impl Parser {
             } else {
                 // ブロックの最後の式（セミコロンなし）の直後が } でない場合はエラー
                 if self.peek() != Some(&Token::RBrace) {
-                    return Err(ParseError::new("Expected semicolon or '}' after statement", self.peek_span()).into());
+                    return Err(ParseError::new(
+                        "Expected semicolon or '}' after statement",
+                        self.peek_span(),
+                    )
+                    .into());
                 }
             }
         }
@@ -120,7 +130,7 @@ impl Parser {
             span: combine_spans(start_span, end_span),
         })
     }
-    
+
     /// 1つの文 (`let`, `{}` または 式) をパースする
     fn parse_statement(&mut self) -> Result<RawAstNode, LangError> {
         match self.peek() {
@@ -161,7 +171,12 @@ impl Parser {
         while !self.is_at_end() {
             match self.peek() {
                 // 式の区切りならループを終了
-                Some(Token::Comma) | Some(Token::Semicolon) | Some(Token::RBrace) | Some(Token::LBrace) | Some(Token::RParen) | Some(Token::Else) => break,
+                Some(Token::Comma)
+                | Some(Token::Semicolon)
+                | Some(Token::RBrace)
+                | Some(Token::LBrace)
+                | Some(Token::RParen)
+                | Some(Token::Else) => break,
                 _ => {}
             }
 
@@ -195,7 +210,12 @@ impl Parser {
             .ok_or_else(|| ParseError::new("Unexpected end of file", self.peek_span()))?;
         match token {
             // Identifierとリテラルは、単にトークンとして消費するだけ
-            Token::Identifier(_) | Token::IntLiteral(_) | Token::FloatLiteral(_) | Token::StringLiteral(_) | Token::True | Token::False => {
+            Token::Identifier(_)
+            | Token::IntLiteral(_)
+            | Token::FloatLiteral(_)
+            | Token::StringLiteral(_)
+            | Token::True
+            | Token::False => {
                 let (t, s) = self.advance();
                 Ok(RawExprPart::Token(t, s))
             }
@@ -205,22 +225,24 @@ impl Parser {
             Token::Colon => self.parse_type_annotation(),
             Token::If => self.parse_if_as_part(),
             // CallLParenは `parse_sexpression` の中で処理されるため、ここに来たらエラー
-            Token::CallLParen => {
-                Err(ParseError::new("Unexpected token: C-style parenthesis cannot start an expression part.", *span).into())
-            }
+            Token::CallLParen => Err(ParseError::new(
+                "Unexpected token: C-style parenthesis cannot start an expression part.",
+                *span,
+            )
+            .into()),
             _ => {
                 Err(ParseError::new(format!("Unexpected token in expression: {:?}", token), *span)
                     .into())
             }
         }
     }
-    
+
     /// S式の一部として `if <cond> { ... } else { ... }` をパースする
     fn parse_if_as_part(&mut self) -> Result<RawExprPart, LangError> {
         let start_span = self.consume(Token::If)?.1;
         let condition = self.parse_expression()?;
         let then_branch = self.parse_block()?;
-        
+
         let else_branch = if self.check_and_consume(Token::Else) {
             // `else if ...` は `else` の後に続く式として解釈する
             // `else {` の場合はブロックとして解釈する
@@ -230,9 +252,12 @@ impl Parser {
                 self.parse_expression()?
             }
         } else {
-             // elseがない場合、Unitを返す空のブロックを生成する
+            // elseがない場合、Unitを返す空のブロックを生成する
             let dummy_span = self.peek_span();
-            RawAstNode::Block { statements: vec![], span: dummy_span }
+            RawAstNode::Block {
+                statements: vec![],
+                span: dummy_span,
+            }
         };
 
         let end_span = else_branch.span();
@@ -241,7 +266,7 @@ impl Parser {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch),
             else_branch: Box::new(else_branch),
-            span: combine_spans(start_span, end_span)
+            span: combine_spans(start_span, end_span),
         })
     }
 
@@ -251,16 +276,19 @@ impl Parser {
         let (type_name, type_span) = self.consume_identifier()?;
         Ok(RawExprPart::TypeAnnotation(type_name, type_span))
     }
-    
+
     /// `( ... )` で囲まれたS式グループをパースする
     fn parse_s_expr_group(&mut self) -> Result<RawExprPart, LangError> {
         let start_span = self.consume(Token::LParen)?.1;
         // グループの中身は、単一のS式としてパースする
         let inner_expr = self.parse_sexpression()?;
         let end_span = self.consume(Token::RParen)?.1;
-        
+
         if let RawAstNode::Expr(parts) = inner_expr {
-            Ok(RawExprPart::Group(parts, combine_spans(start_span, end_span)))
+            Ok(RawExprPart::Group(
+                parts,
+                combine_spans(start_span, end_span),
+            ))
         } else {
             // parse_sexpressionは常にExprを返すはず
             unreachable!()
@@ -285,7 +313,10 @@ impl Parser {
             }
         }
         let end_span = self.consume(Token::RParen)?.1;
-        Ok(RawExprPart::CStyleArgs(args, combine_spans(start_span, end_span)))
+        Ok(RawExprPart::CStyleArgs(
+            args,
+            combine_spans(start_span, end_span),
+        ))
     }
 
     /// `$ ... $` で囲まれた数式ブロックをパースする
@@ -303,21 +334,28 @@ impl Parser {
     fn parse_math_expression(&mut self, precedence: u8) -> Result<MathAstNode, LangError> {
         // Prefix (リテラル, 変数, 関数呼び出し, グループ化された式など)
         let mut left = {
-            let (token, span) = self.peek_full().ok_or_else(|| ParseError::new("Unexpected end of math expression", self.peek_span()))?.clone();
+            let (token, span) = self
+                .peek_full()
+                .ok_or_else(|| {
+                    ParseError::new("Unexpected end of math expression", self.peek_span())
+                })?
+                .clone();
             match token {
                 Token::IntLiteral(_) | Token::FloatLiteral(_) => {
                     let (t, s) = self.advance();
                     match t {
                         Token::IntLiteral(v) => MathAstNode::Literal(MathLiteral::Int(v), s),
                         Token::FloatLiteral(v) => MathAstNode::Literal(MathLiteral::Float(v), s),
-                        _ => unreachable!()
+                        _ => unreachable!(),
                     }
                 }
                 Token::Identifier(name) => {
                     self.advance(); // 識別子を消費
-                    // 数式ブロック内では、トップレベルのパーサーとは異なり、識別子の次に'('があれば、
-                    // 間に空白があってもC-style呼び出しとみなす。
-                    if self.peek() == Some(&Token::LParen) || self.peek() == Some(&Token::CallLParen) {
+                                  // 数式ブロック内では、トップレベルのパーサーとは異なり、識別子の次に'('があれば、
+                                  // 間に空白があってもC-style呼び出しとみなす。
+                    if self.peek() == Some(&Token::LParen)
+                        || self.peek() == Some(&Token::CallLParen)
+                    {
                         self.parse_math_call(name, span)?
                     } else {
                         MathAstNode::Variable(name, span)
@@ -331,7 +369,10 @@ impl Parser {
                 }
                 _ => {
                     return Err(ParseError::new(
-                        format!("Expected literal, variable, function call or '(' in math expression, found {:?}", token),
+                        format!(
+                            "Expected literal, variable, function call or '(' in math expression, found {:?}",
+                            token
+                        ),
                         span,
                     )
                     .into())
@@ -357,12 +398,16 @@ impl Parser {
     }
 
     /// 数式内の関数呼び出し `name(...)` をパースする
-    fn parse_math_call(&mut self, name: String, name_span: Span) -> Result<MathAstNode, LangError> {
+    fn parse_math_call(
+        &mut self,
+        name: String,
+        name_span: Span,
+    ) -> Result<MathAstNode, LangError> {
         // 【修正点】数式ブロック内の `(` も LParen と CallLParen の両方を許容する
-        if self.peek() == Some(&Token::LParen) { 
-            self.consume(Token::LParen)?; 
-        } else { 
-            self.consume(Token::CallLParen)?; 
+        if self.peek() == Some(&Token::LParen) {
+            self.consume(Token::LParen)?;
+        } else {
+            self.consume(Token::CallLParen)?;
         }
 
         let mut args = Vec::new();
@@ -400,9 +445,13 @@ impl Parser {
 
     /// トークン自体から優先順位を返す
     fn get_token_precedence(&self, token: &Token) -> u8 {
-         match token {
-            Token::EqualsEquals | Token::BangEquals | Token::LessThan
-            | Token::LessThanEquals | Token::GreaterThan | Token::GreaterThanEquals => 1,
+        match token {
+            Token::EqualsEquals
+            | Token::BangEquals
+            | Token::LessThan
+            | Token::LessThanEquals
+            | Token::GreaterThan
+            | Token::GreaterThanEquals => 1,
             Token::Plus | Token::Minus => 2,
             Token::Star | Token::Slash => 3,
             _ => 0,
@@ -462,10 +511,11 @@ impl Parser {
         if let Token::Identifier(s) = token {
             Ok((s, span))
         } else {
-            Err(
-                ParseError::new(format!("Expected an identifier but found '{:?}'", token), span)
-                    .into(),
+            Err(ParseError::new(
+                format!("Expected an identifier but found '{:?}'", token),
+                span,
             )
+            .into())
         }
     }
 }
@@ -473,6 +523,8 @@ impl Parser {
 mod tests {
     use super::*;
     use crate::lexer::Lexer;
+    extern crate alloc;
+    use alloc::vec;
 
     // Helper function to parse a math expression string
     fn parse_math_str(input: &str) -> Result<MathAstNode, LangError> {
@@ -481,7 +533,7 @@ mod tests {
         let mut tokens = vec![(Token::Dollar, Span::default())];
         tokens.extend(lexer.tokenize_all().unwrap());
         tokens.push((Token::Dollar, Span::default()));
-        
+
         let mut parser = Parser::new(tokens);
         parser.consume(Token::Dollar)?; // 開始の`$`を消費
         parser.parse_math_expression(0)
@@ -498,7 +550,10 @@ mod tests {
             // 引数が `RawAstNode::Expr([RawExprPart::Token(IntLiteral(123), ...)])` であることを確認
             if let RawAstNode::Expr(parts) = &args[0] {
                 assert_eq!(parts.len(), 1);
-                assert!(matches!(&parts[0], RawExprPart::Token(Token::IntLiteral(123), _)));
+                assert!(matches!(
+                    &parts[0],
+                    RawExprPart::Token(Token::IntLiteral(123), _)
+                ));
             } else {
                 panic!("Argument should be a RawAstNode::Expr");
             }
@@ -506,7 +561,7 @@ mod tests {
             panic!("Expected MathAstNode::Call, got {:?}", result);
         }
     }
-    
+
     #[test]
     fn test_math_call_with_sexpr_function_call_arg() {
         // 数式内の関数呼び出しの引数が、S式の関数呼び出しであるケース
@@ -518,7 +573,9 @@ mod tests {
             // 引数が `RawAstNode::Expr([Token(Ident("add")), Token(Num(1)), Token(Num(2))])` であることを確認
             if let RawAstNode::Expr(parts) = &args[0] {
                 assert_eq!(parts.len(), 3);
-                assert!(matches!(&parts[0], RawExprPart::Token(Token::Identifier(s), _) if s == "add"));
+                assert!(
+                    matches!(&parts[0], RawExprPart::Token(Token::Identifier(s), _) if s == "add")
+                );
             } else {
                 panic!("Argument should be a RawAstNode::Expr");
             }
@@ -538,14 +595,14 @@ mod tests {
         if let Ok(MathAstNode::InfixOp { op, right, .. }) = result {
             assert_eq!(op, Token::Star);
             if let MathAstNode::Call { name, args, .. } = *right {
-                 assert_eq!(name.0, "factorial");
-                 assert_eq!(args.len(), 1);
-                 if let RawAstNode::Expr(parts) = &args[0] {
+                assert_eq!(name.0, "factorial");
+                assert_eq!(args.len(), 1);
+                if let RawAstNode::Expr(parts) = &args[0] {
                     assert_eq!(parts.len(), 1);
                     assert!(matches!(&parts[0], RawExprPart::MathBlock(_, _)));
-                 } else {
+                } else {
                     panic!("Argument should be a RawAstNode::Expr containing a MathBlock");
-                 }
+                }
             } else {
                 panic!("Right side of InfixOp should be a Call");
             }

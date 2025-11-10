@@ -1,9 +1,13 @@
 //! ソースコード文字列をトークンのシーケンスに変換する字句解析器(Lexer)。
 
+extern crate alloc;
 use crate::span::Span;
 use crate::token::Token;
-use std::iter::Peekable;
-use std::str::Chars;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::iter::Peekable;
+use core::str::Chars;
 
 /// 字句解析器
 pub struct Lexer<'a> {
@@ -82,7 +86,7 @@ impl<'a> Lexer<'a> {
                 };
                 Ok(Some((token, span)))
             }
-            
+
             // 複数文字の可能性があるシンボル
             '-' if self.peek() == Some(&'>') => {
                 self.next_char(); // '>'を消費
@@ -98,7 +102,7 @@ impl<'a> Lexer<'a> {
                 self.last_char_was_ident_part = false;
                 Ok(Some((Token::Minus, span)))
             }
-            
+
             '=' => {
                 self.last_char_was_ident_part = false;
                 if self.peek() == Some(&'=') {
@@ -135,7 +139,7 @@ impl<'a> Lexer<'a> {
                     Ok(Some((Token::GreaterThan, span)))
                 }
             }
-            
+
             // リテラルや識別子はフラグをセットする
             '"' => {
                 let token = self.consume_string()?;
@@ -152,14 +156,19 @@ impl<'a> Lexer<'a> {
                 self.last_char_was_ident_part = true;
                 Ok(Some((token, span)))
             }
-            
+
             _ => Err(format!("Unexpected character: {} at {}", char, span)),
         }
     }
 
     // --- ヘルパー関数 ---
 
-    fn span(&self) -> Span { Span { line: self.line, column: self.column } }
+    fn span(&self) -> Span {
+        Span {
+            line: self.line,
+            column: self.column,
+        }
+    }
     fn next_char(&mut self) -> Option<char> {
         let char = self.input.next()?;
         if char == '\n' {
@@ -170,15 +179,19 @@ impl<'a> Lexer<'a> {
         }
         Some(char)
     }
-    fn peek(&mut self) -> Option<&char> { self.input.peek() }
-    
+    fn peek(&mut self) -> Option<&char> {
+        self.input.peek()
+    }
+
     fn consume_line_comment(&mut self) {
         while let Some(c) = self.peek() {
-            if *c == '\n' { break; }
+            if *c == '\n' {
+                break;
+            }
             self.next_char();
         }
     }
-    
+
     fn consume_string(&mut self) -> Result<Token, String> {
         let mut s = String::new();
         while let Some(c) = self.peek() {
@@ -207,7 +220,7 @@ impl<'a> Lexer<'a> {
                         s.push('"');
                     }
                     Some(other) => {
-                         return Err(format!("Unknown escape sequence '\\{}'", other));
+                        return Err(format!("Unknown escape sequence '\\{}'", other));
                     }
                     None => return Err("Unterminated string literal".to_string()),
                 }
@@ -215,7 +228,7 @@ impl<'a> Lexer<'a> {
                 s.push(current_char);
             }
         }
-        
+
         if self.peek().is_none() {
             return Err("Unterminated string literal".to_string());
         }
@@ -255,5 +268,9 @@ impl<'a> Lexer<'a> {
     }
 }
 
-fn is_ident_start(c: char) -> bool { c.is_alphabetic() || c == '_' }
-fn is_ident_continue(c: char) -> bool { c.is_alphanumeric() || c == '_' }
+fn is_ident_start(c: char) -> bool {
+    c.is_alphabetic() || c == '_'
+}
+fn is_ident_continue(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
