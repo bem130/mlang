@@ -225,6 +225,46 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                 span: block_span,
             })
         }
+        RawAstNode::While {
+            condition,
+            body,
+            span,
+        } => {
+            let typed_condition = analyze_expr(analyzer, condition)?;
+            if typed_condition.data_type != DataType::Bool {
+                return Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "While condition must be a boolean expression, but found type '{}'",
+                        typed_condition.data_type
+                    ),
+                    typed_condition.span,
+                )));
+            }
+
+            analyzer.enter_scope();
+            let typed_body_result = analyze_expr(analyzer, body);
+            analyzer.leave_scope();
+            let typed_body = typed_body_result?;
+
+            if typed_body.data_type != DataType::Unit {
+                return Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "While body must evaluate to '()', but found type '{}'",
+                        typed_body.data_type
+                    ),
+                    typed_body.span,
+                )));
+            }
+
+            Ok(TypedExpr {
+                kind: TypedExprKind::While {
+                    condition: Box::new(typed_condition),
+                    body: Box::new(typed_body),
+                },
+                data_type: DataType::Unit,
+                span: *span,
+            })
+        }
         RawAstNode::FnDef { .. } => {
             unreachable!("Function definitions cannot be nested inside expressions.")
         }

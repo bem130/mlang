@@ -138,6 +138,7 @@ impl Parser {
     fn parse_statement(&mut self) -> Result<RawAstNode, LangError> {
         match self.peek() {
             Some(Token::Let) => self.parse_let_def(),
+            Some(Token::While) => self.parse_while_loop(),
             Some(Token::Identifier(_)) if self.peek_n(1) == Some(&Token::Equals) => {
                 self.parse_assignment()
             }
@@ -186,9 +187,25 @@ impl Parser {
     fn parse_expression(&mut self) -> Result<RawAstNode, LangError> {
         if self.peek() == Some(&Token::LBrace) {
             self.parse_block()
+        } else if self.peek() == Some(&Token::While) {
+            self.parse_while_loop()
         } else {
             self.parse_sexpression()
         }
+    }
+
+    /// `while <condition> { ... }` をパースする
+    fn parse_while_loop(&mut self) -> Result<RawAstNode, LangError> {
+        let start_span = self.consume(Token::While)?.1;
+        let condition = self.parse_expression()?;
+        let body = self.parse_block()?;
+        let end_span = body.span();
+
+        Ok(RawAstNode::While {
+            condition: Box::new(condition),
+            body: Box::new(body),
+            span: combine_spans(start_span, end_span),
+        })
     }
 
     /// S式（S-expression）をパースする
