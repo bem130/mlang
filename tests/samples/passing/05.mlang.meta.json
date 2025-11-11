@@ -9,5 +9,22 @@
     {"name": "generate_fiscal_report", "params": ["i32", "i32"], "return_type": "string"},
     {"name": "test_integration", "params": [], "return_type": "unit"},
     {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "--- mylang integration test suite start ---",
+    "--- 1. Testing Complex Boolean Logic ---",
+    "  - Is 2024 a leap year? (true): true",
+    "  - Is 1900 a leap year? (false): false",
+    "  - Is 2000 a leap year? (true): true",
+    "--- 2. Testing Recursive String Building ---",
+    "  - Generated Separator: ----------------------------------------",
+    "--- 3. Testing Feature Integration ---",
+    "--- Fiscal Report for 2023 (Common Year)",
+    "  - Rating: Good",
+    "====================",
+    "--- Fiscal Report for 2024 (Leap Year)",
+    "  - Rating: Needs Improvement",
+    "====================",
+    "--- mylang integration test suite finished ---"
   ]
 }

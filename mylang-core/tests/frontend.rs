@@ -33,6 +33,9 @@ enum SampleMetadata {
     Ok {
         #[serde(default)]
         functions: Vec<FunctionMetadata>,
+        #[serde(default)]
+        #[allow(dead_code)]
+        stdout: Vec<String>,
     },
     Error {
         error: ErrorMetadata,
@@ -108,7 +111,7 @@ fn load_samples(subdir: &str) -> Vec<SampleCase> {
 fn passing_samples_match_metadata() {
     for sample in load_samples("passing") {
         match sample.metadata {
-            SampleMetadata::Ok { functions } => {
+            SampleMetadata::Ok { functions, .. } => {
                 let analysis = analyze_source(&sample.source).unwrap_or_else(|err| {
                     panic!("expected Ok for {}, got Err: {}", sample.name, err)
                 });

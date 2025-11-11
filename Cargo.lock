@@ -221,7 +221,11 @@ name = "mylang-wasm-codegen"
 version = "0.1.0"
 dependencies = [
  "mylang-core",
+ "serde",
+ "serde_json",
  "thiserror",
+ "wasmi",
+ "wat",
 ]
 
 [[package]]

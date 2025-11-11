@@ -2,5 +2,13 @@
   "expect": "ok",
   "functions": [
     {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "Level 0: x = 1",
+    "Level 1: x = 2",
+    "Level 2: x = 3",
+    "Level 1: z = 30",
+    "Level 0: y = 32",
+    "Level 0: x is still 1"
   ]
 }
