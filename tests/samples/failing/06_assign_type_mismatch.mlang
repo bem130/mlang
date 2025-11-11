@@ -1,0 +1,4 @@
+fn main() {
+    let mut flag = true;
+    flag = 1;
+}
