@@ -2,7 +2,10 @@
 resolver = "2"
 members = [
     "mylang-core",
-    "mylang-cli", "mylang-wasm-codegen", "mylang-llvm-codegen",
+    "mylang-cli",
+    "mylang-wasm-codegen",
+    "mylang-llvm-codegen",
+    "mylang-playground",
 ]
 
 [workspace.dependencies]
