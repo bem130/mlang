@@ -1,0 +1,133 @@
+:root {
+  color: #1f2328;
+  background: #f6f8fa;
+  font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-header,
+.page-footer {
+  padding: 1.5rem clamp(1rem, 4vw, 3rem);
+  background: #1f2328;
+  color: #ffffff;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+}
+
+.page-header p {
+  margin: 0.5rem 0 0;
+}
+
+.page-footer {
+  font-size: 0.875rem;
+  background: #30363d;
+}
+
+.layout {
+  flex: 1;
+  display: grid;
+  gap: 1.5rem;
+  padding: clamp(1rem, 4vw, 3rem);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  box-sizing: border-box;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  background: #ffffff;
+  border-radius: 0.75rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+  padding: 1.25rem;
+}
+
+.panel__label {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.panel__textarea {
+  width: 100%;
+  min-height: 240px;
+  resize: vertical;
+  font-family: "Fira Code", "Source Code Pro", monospace;
+  font-size: 0.95rem;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid #d0d7de;
+  box-sizing: border-box;
+  background: #f8fafc;
+  color: inherit;
+}
+
+.panel__textarea:focus {
+  outline: 2px solid #0969da;
+  background: #ffffff;
+}
+
+.panel__textarea[readonly] {
+  background: #f0f6ff;
+}
+
+.panel__controls {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+button {
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  padding: 0.6rem 1.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  background: #e6edf3;
+  color: #1f2328;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+button.primary {
+  background: linear-gradient(135deg, #2f81f7, #0969da);
+  color: #ffffff;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+}
+
+button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+  box-shadow: none;
+}
+
+.status {
+  min-height: 1.5rem;
+  font-size: 0.9rem;
+  color: #1f6feb;
+}
+
+.status--error {
+  color: #d1242f;
+}
+
+@media (max-width: 720px) {
+  .panel__textarea {
+    min-height: 200px;
+  }
+}
