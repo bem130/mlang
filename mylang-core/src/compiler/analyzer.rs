@@ -1,7 +1,8 @@
 //! RawASTを意味解析・型チェックし、TypedASTに変換するアナライザー。
 
 extern crate alloc;
-use super::Analyzer;
+use super::{Analyzer, VariableEntry};
+use crate::alloc::string::ToString;
 use crate::ast::*;
 use crate::error::{CompileError, LangError};
 use crate::token::Token;
@@ -9,7 +10,6 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::String;
-use crate::alloc::string::ToString;
 use alloc::vec::Vec;
 
 /// トップレベルのRawAstNodeを型付きASTに変換するエントリーポイント
@@ -31,20 +31,22 @@ pub fn analyze_toplevel(
             for ((param_name, _), (type_name, type_span)) in params {
                 let param_type = analyzer.string_to_type(type_name, *type_span)?;
                 // パラメータも変数テーブルに追加
-                analyzer.variable_table.push((
-                    param_name.clone(),
-                    param_name.clone(),
-                    param_type.clone(),
-                    analyzer.scope_depth,
-                ));
+                analyzer.variable_table.push(VariableEntry {
+                    original_name: param_name.clone(),
+                    unique_name: param_name.clone(),
+                    data_type: param_type.clone(),
+                    scope_depth: analyzer.scope_depth,
+                    is_mutable: false,
+                });
                 typed_params.push((param_name.clone(), param_type));
             }
 
             let typed_body = analyze_expr(analyzer, body)?;
 
-            let mut original_return_type = return_type
-                .as_ref()
-                .map_or(Ok(DataType::Unit), |rt| analyzer.string_to_type(&rt.0, rt.1))?;
+            let mut original_return_type =
+                return_type.as_ref().map_or(Ok(DataType::Unit), |rt| {
+                    analyzer.string_to_type(&rt.0, rt.1)
+                })?;
 
             if name.0 == "main" && original_return_type != DataType::Unit {
                 return Err(LangError::Compile(CompileError::new(
@@ -125,27 +127,70 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
             }
             Ok(result)
         }
-        RawAstNode::LetDef { name, value, span } => {
+        RawAstNode::LetDef {
+            name,
+            value,
+            span,
+            is_mutable,
+        } => {
             let typed_value = analyze_expr(analyzer, value)?;
 
             let count = analyzer.var_counters.entry(name.0.clone()).or_insert(0);
             let unique_name = format!("{}_{}", name.0, count);
             *count += 1;
 
-            analyzer.variable_table.push((
-                name.0.clone(),
-                unique_name.clone(),
-                typed_value.data_type.clone(),
-                analyzer.scope_depth,
-            ));
+            analyzer.variable_table.push(VariableEntry {
+                original_name: name.0.clone(),
+                unique_name: unique_name.clone(),
+                data_type: typed_value.data_type.clone(),
+                scope_depth: analyzer.scope_depth,
+                is_mutable: *is_mutable,
+            });
             Ok(TypedExpr {
                 kind: TypedExprKind::LetBinding {
                     name: (name.0.clone(), unique_name),
                     value: Box::new(typed_value),
+                    is_mutable: *is_mutable,
                 },
                 data_type: DataType::Unit,
                 span: *span,
             })
+        }
+        RawAstNode::Assignment { name, value, span } => {
+            let typed_value = analyze_expr(analyzer, value)?;
+            if let Some(entry) = analyzer.find_variable(&name.0) {
+                if !entry.is_mutable {
+                    return Err(LangError::Compile(CompileError::new(
+                        format!(
+                            "Cannot assign to immutable variable '{}'",
+                            entry.original_name
+                        ),
+                        name.1,
+                    )));
+                }
+                if entry.data_type != typed_value.data_type {
+                    return Err(LangError::Compile(CompileError::new(
+                        format!(
+                            "Type mismatch in assignment to '{}': expected '{}' but found '{}'",
+                            entry.original_name, entry.data_type, typed_value.data_type
+                        ),
+                        typed_value.span,
+                    )));
+                }
+                Ok(TypedExpr {
+                    kind: TypedExprKind::Assignment {
+                        name: (entry.original_name.clone(), entry.unique_name.clone()),
+                        value: Box::new(typed_value),
+                    },
+                    data_type: DataType::Unit,
+                    span: *span,
+                })
+            } else {
+                Err(LangError::Compile(CompileError::new(
+                    format!("Undefined variable '{}'", name.0),
+                    name.1,
+                )))
+            }
         }
         RawAstNode::Block { statements, span } => {
             analyzer.enter_scope();
@@ -237,16 +282,12 @@ fn resolve_c_style_call<'a>(
     arg_nodes: &[RawAstNode],
     parts: &mut &'a [RawExprPart],
 ) -> Result<TypedExpr, LangError> {
-    let signature = analyzer
-        .function_table
-        .get(name)
-        .cloned()
-        .ok_or_else(|| {
-            LangError::Compile(CompileError::new(
-                format!("Undefined function '{}'", name),
-                span,
-            ))
-        })?;
+    let signature = analyzer.function_table.get(name).cloned().ok_or_else(|| {
+        LangError::Compile(CompileError::new(
+            format!("Undefined function '{}'", name),
+            span,
+        ))
+    })?;
     if arg_nodes.len() != signature.param_types.len() {
         return Err(LangError::Compile(
             CompileError::new(
@@ -308,19 +349,23 @@ fn resolve_sexp_call_or_variable<'a>(
     *parts = &parts[1..];
 
     // 1. 変数として解決できるか試す
-    if hoisted_vars.contains(name) || analyzer.find_variable(name).is_some() {
-        if let Some((original_name, unique_name, var_type, _)) = analyzer.find_variable(name) {
+    let variable_entry = analyzer.find_variable(name);
+    if hoisted_vars.contains(name) || variable_entry.is_some() {
+        if let Some(entry) = variable_entry {
             return Ok(TypedExpr {
                 kind: TypedExprKind::VariableRef {
-                    name: original_name.clone(),
-                    unique_name: unique_name.clone(),
+                    name: entry.original_name.clone(),
+                    unique_name: entry.unique_name.clone(),
                 },
-                data_type: var_type.clone(),
+                data_type: entry.data_type.clone(),
                 span,
             });
         } else {
             return Err(LangError::Compile(CompileError::new(
-                format!("Cannot read local variable '{}' in its own initializer", name),
+                format!(
+                    "Cannot read local variable '{}' in its own initializer",
+                    name
+                ),
                 span,
             )));
         }
@@ -435,7 +480,10 @@ fn analyze_sexp_from_slice<'a>(
                     })
                 }
                 _ => Err(LangError::Compile(CompileError::new(
-                    format!("This token cannot be the start of an expression: {:?}", token),
+                    format!(
+                        "This token cannot be the start of an expression: {:?}",
+                        token
+                    ),
                     *span,
                 ))),
             }
@@ -522,13 +570,13 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
             }),
         },
         MathAstNode::Variable(name, span) => {
-            if let Some((original_name, unique_name, var_type, _)) = analyzer.find_variable(name) {
+            if let Some(entry) = analyzer.find_variable(name) {
                 Ok(TypedExpr {
                     kind: TypedExprKind::VariableRef {
-                        name: original_name.clone(),
-                        unique_name: unique_name.clone(),
+                        name: entry.original_name.clone(),
+                        unique_name: entry.unique_name.clone(),
                     },
-                    data_type: var_type.clone(),
+                    data_type: entry.data_type.clone(),
                     span: *span,
                 })
             } else {
@@ -573,9 +621,12 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
                 (Token::GreaterThanEquals, DataType::I32) => ("i32.ge_s", DataType::Bool),
                 _ => {
                     return Err(LangError::Compile(CompileError::new(
-                        format!("Operator `{:?}` is not supported for type `{}`", op, op_type),
+                        format!(
+                            "Operator `{:?}` is not supported for type `{}`",
+                            op, op_type
+                        ),
                         *span,
-                    )))
+                    )));
                 }
             };
             Ok(TypedExpr {
@@ -588,17 +639,16 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
             })
         }
         MathAstNode::Call { name, args, span } => {
-            let signature =
-                analyzer
-                    .function_table
-                    .get(&name.0)
-                    .cloned()
-                    .ok_or_else(|| {
-                        LangError::Compile(CompileError::new(
-                            format!("Undefined function '{}' in math expression", name.0),
-                            name.1,
-                        ))
-                    })?;
+            let signature = analyzer
+                .function_table
+                .get(&name.0)
+                .cloned()
+                .ok_or_else(|| {
+                    LangError::Compile(CompileError::new(
+                        format!("Undefined function '{}' in math expression", name.0),
+                        name.1,
+                    ))
+                })?;
             if args.len() != signature.param_types.len() {
                 let err = CompileError::new(
                     format!(

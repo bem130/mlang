@@ -103,9 +103,10 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
                 LiteralValue::F64(f) => ("f64", f.to_string()),
                 LiteralValue::Bool(b) => ("i32", if *b { "1" } else { "0" }.to_string()),
             };
-            generator
-                .wat_buffer
-                .push_str(&format!("    {}.const {} ;; Literal\n", wat_type, const_val));
+            generator.wat_buffer.push_str(&format!(
+                "    {}.const {} ;; Literal\n",
+                wat_type, const_val
+            ));
         }
         TypedExprKind::StringLiteral { header_offset } => {
             generator.wat_buffer.push_str(&format!(
@@ -113,7 +114,9 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
                 header_offset
             ));
         }
-        TypedExprKind::VariableRef { unique_name, name, .. } => {
+        TypedExprKind::VariableRef {
+            unique_name, name, ..
+        } => {
             generator.wat_buffer.push_str(&format!(
                 "    local.get ${} ;; Var: {}\n",
                 unique_name, name
@@ -135,16 +138,12 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
                 "string_concat" => {
                     generate_expr(generator, &args[0])?;
                     generate_expr(generator, &args[1])?;
-                    generator
-                        .wat_buffer
-                        .push_str("    call $__string_concat\n");
+                    generator.wat_buffer.push_str("    call $__string_concat\n");
                     return Ok(());
                 }
                 "i32_to_string" => {
                     generate_expr(generator, &args[0])?;
-                    generator
-                        .wat_buffer
-                        .push_str("    call $__i32_to_string\n");
+                    generator.wat_buffer.push_str("    call $__i32_to_string\n");
                     return Ok(());
                 }
                 "print" => {
@@ -183,10 +182,21 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
                     .push_str(&format!("    call ${}\n", name));
             }
         }
-        TypedExprKind::LetBinding { name, value } => {
+        TypedExprKind::LetBinding { name, value, .. } => {
             generator
                 .wat_buffer
                 .push_str(&format!("    ;; Let: {}\n", name.0));
+            generate_expr(generator, value)?;
+            if value.data_type != DataType::Unit {
+                generator
+                    .wat_buffer
+                    .push_str(&format!("    local.set ${}\n", name.1));
+            }
+        }
+        TypedExprKind::Assignment { name, value } => {
+            generator
+                .wat_buffer
+                .push_str(&format!("    ;; Assign: {}\n", name.0));
             generate_expr(generator, value)?;
             if value.data_type != DataType::Unit {
                 generator
@@ -254,6 +264,7 @@ fn body_uses_print(expr: &TypedExpr) -> bool {
                 }
             }
             TypedExprKind::LetBinding { value, .. } => find_prints(value, uses),
+            TypedExprKind::Assignment { value, .. } => find_prints(value, uses),
             TypedExprKind::IfExpr {
                 condition,
                 then_branch,
@@ -281,8 +292,11 @@ pub fn collect_and_declare_locals(generator: &mut WasmGenerator, typed_body: &Ty
 
     fn find_lets(expr: &TypedExpr, locals: &mut BTreeMap<String, DataType>) {
         match &expr.kind {
-            TypedExprKind::LetBinding { name, value } => {
+            TypedExprKind::LetBinding { name, value, .. } => {
                 locals.insert(name.1.clone(), value.data_type.clone());
+                find_lets(value, locals);
+            }
+            TypedExprKind::Assignment { value, .. } => {
                 find_lets(value, locals);
             }
             TypedExprKind::IfExpr {

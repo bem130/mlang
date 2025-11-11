@@ -3,7 +3,7 @@
 extern crate alloc;
 use crate::ast::*;
 use crate::error::{LangError, ParseError};
-use crate::span::{combine_spans, Span};
+use crate::span::{Span, combine_spans};
 use crate::token::Token;
 use alloc::boxed::Box;
 use alloc::format;
@@ -19,7 +19,10 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: Vec<(Token, Span)>) -> Self {
-        Self { tokens, position: 0 }
+        Self {
+            tokens,
+            position: 0,
+        }
     }
 
     /// トップレベルの構文(関数定義など)をパースする
@@ -33,7 +36,7 @@ impl Parser {
                         "Expected function definition at toplevel",
                         self.peek_span(),
                     )
-                    .into())
+                    .into());
                 }
             }
         }
@@ -135,6 +138,9 @@ impl Parser {
     fn parse_statement(&mut self) -> Result<RawAstNode, LangError> {
         match self.peek() {
             Some(Token::Let) => self.parse_let_def(),
+            Some(Token::Identifier(_)) if self.peek_n(1) == Some(&Token::Equals) => {
+                self.parse_assignment()
+            }
             _ => self.parse_expression(),
         }
     }
@@ -142,6 +148,12 @@ impl Parser {
     /// let束縛 `let name = ...` をパースする
     fn parse_let_def(&mut self) -> Result<RawAstNode, LangError> {
         let start_span = self.consume(Token::Let)?.1;
+        let is_mutable = if self.peek() == Some(&Token::Mut) {
+            self.advance();
+            true
+        } else {
+            false
+        };
         let (name, name_span) = self.consume_identifier()?;
         self.consume(Token::Equals)?;
 
@@ -151,7 +163,22 @@ impl Parser {
         Ok(RawAstNode::LetDef {
             name: (name, name_span),
             value: Box::new(value),
+            is_mutable,
             span: combine_spans(start_span, end_span),
+        })
+    }
+
+    /// 代入文 `name = expr` をパースする
+    fn parse_assignment(&mut self) -> Result<RawAstNode, LangError> {
+        let (name, name_span) = self.consume_identifier()?;
+        self.consume(Token::Equals)?;
+        let value = self.parse_expression()?;
+        let end_span = value.span();
+
+        Ok(RawAstNode::Assignment {
+            name: (name, name_span),
+            value: Box::new(value),
+            span: combine_spans(name_span, end_span),
         })
     }
 
@@ -194,10 +221,11 @@ impl Parser {
             }
         }
         if parts.is_empty() {
-            return Err(
-                ParseError::new("Expected an expression, but found nothing.", self.peek_span())
-                    .into(),
-            );
+            return Err(ParseError::new(
+                "Expected an expression, but found nothing.",
+                self.peek_span(),
+            )
+            .into());
         }
         Ok(RawAstNode::Expr(parts))
     }
@@ -230,10 +258,11 @@ impl Parser {
                 *span,
             )
             .into()),
-            _ => {
-                Err(ParseError::new(format!("Unexpected token in expression: {:?}", token), *span)
-                    .into())
-            }
+            _ => Err(ParseError::new(
+                format!("Unexpected token in expression: {:?}", token),
+                *span,
+            )
+            .into()),
         }
     }
 
@@ -398,11 +427,7 @@ impl Parser {
     }
 
     /// 数式内の関数呼び出し `name(...)` をパースする
-    fn parse_math_call(
-        &mut self,
-        name: String,
-        name_span: Span,
-    ) -> Result<MathAstNode, LangError> {
+    fn parse_math_call(&mut self, name: String, name_span: Span) -> Result<MathAstNode, LangError> {
         // 【修正点】数式ブロック内の `(` も LParen と CallLParen の両方を許容する
         if self.peek() == Some(&Token::LParen) {
             self.consume(Token::LParen)?;
@@ -464,6 +489,9 @@ impl Parser {
     }
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.position).map(|(t, _)| t)
+    }
+    fn peek_n(&self, offset: usize) -> Option<&Token> {
+        self.tokens.get(self.position + offset).map(|(t, _)| t)
     }
     fn peek_span(&self) -> Span {
         self.tokens

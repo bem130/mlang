@@ -26,6 +26,13 @@ pub enum RawAstNode {
     LetDef {
         name: (String, Span),
         value: Box<RawAstNode>,
+        is_mutable: bool,
+        span: Span,
+    },
+    // 変数への代入
+    Assignment {
+        name: (String, Span),
+        value: Box<RawAstNode>,
         span: Span,
     },
     // `{}` で囲まれたブロック
@@ -122,13 +129,20 @@ pub struct TypedExpr {
 #[derive(Debug, Clone)]
 pub enum TypedExprKind {
     Literal(LiteralValue),
-    StringLiteral { header_offset: u32 },
+    StringLiteral {
+        header_offset: u32,
+    },
     VariableRef {
-        name: String, // 元の名前 (エラーメッセージ用)
+        name: String,        // 元の名前 (エラーメッセージ用)
         unique_name: String, // WAT内でのユニークな名前
     },
     LetBinding {
         // name: (元の名前, ユニークな名前)
+        name: (String, String),
+        value: Box<TypedExpr>,
+        is_mutable: bool,
+    },
+    Assignment {
         name: (String, String),
         value: Box<TypedExpr>,
     },
@@ -176,6 +190,7 @@ impl RawAstNode {
             RawAstNode::Expr(parts) => parts.first().unwrap().span(), // 簡易
             RawAstNode::FnDef { span, .. } => *span,
             RawAstNode::LetDef { span, .. } => *span,
+            RawAstNode::Assignment { span, .. } => *span,
             RawAstNode::Block { span, .. } => *span,
         }
     }

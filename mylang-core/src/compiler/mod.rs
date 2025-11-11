@@ -19,14 +19,22 @@ use alloc::vec::Vec;
 pub struct Analyzer {
     pub scope_depth: usize,
     pub function_table: BTreeMap<String, FunctionSignature>,
-    // (ソース名, ユニーク名, 型, スコープ深度)
-    pub variable_table: Vec<(String, String, DataType, usize)>,
+    pub variable_table: Vec<VariableEntry>,
     // 各変数名のカウンター
     pub var_counters: BTreeMap<String, u32>,
     // アナライザーは静的文字列のオフセットを計算する必要があるため、
     // これらのフィールドは残すが、コード生成は行わない。
     pub string_headers: BTreeMap<String, (u32, u32)>, // (data_offset, header_offset)
     pub static_offset: u32,
+}
+
+#[derive(Clone)]
+pub struct VariableEntry {
+    pub original_name: String,
+    pub unique_name: String,
+    pub data_type: DataType,
+    pub scope_depth: usize,
+    pub is_mutable: bool,
 }
 
 #[derive(Clone)]
@@ -133,7 +141,10 @@ impl Analyzer {
                 if self.function_table.contains_key(func_name) {
                     // 組み込み関数は上書きできない
                     return Err(LangError::Compile(CompileError::new(
-                        format!("Function '{}' is a built-in function and cannot be redefined", func_name),
+                        format!(
+                            "Function '{}' is a built-in function and cannot be redefined",
+                            func_name
+                        ),
                         name.1,
                     )));
                 }
@@ -155,14 +166,14 @@ impl Analyzer {
     }
     pub fn leave_scope(&mut self) {
         self.variable_table
-            .retain(|(_, _, _, depth)| *depth < self.scope_depth);
+            .retain(|entry| entry.scope_depth < self.scope_depth);
         self.scope_depth -= 1;
     }
-    pub fn find_variable(&self, name: &str) -> Option<&(String, String, DataType, usize)> {
+    pub fn find_variable(&self, name: &str) -> Option<&VariableEntry> {
         self.variable_table
             .iter()
             .rev()
-            .find(|(var_name, _, _, _)| var_name == name)
+            .find(|entry| entry.original_name == name)
     }
     pub fn string_to_type(&self, s: &str, span: Span) -> Result<DataType, LangError> {
         match s {
