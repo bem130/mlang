@@ -8,6 +8,7 @@ pub enum Token {
     // Keywords
     Fn,
     Let,
+    Mut,
     If,
     Else,
     True,
@@ -53,6 +54,7 @@ impl Token {
         match s {
             "fn" => Some(Token::Fn),
             "let" => Some(Token::Let),
+            "mut" => Some(Token::Mut),
             "if" => Some(Token::If),
             "else" => Some(Token::Else),
             "true" => Some(Token::True),
