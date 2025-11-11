@@ -1,0 +1,10 @@
+{
+  "expect": "error",
+  "error": {
+    "variant": "compile",
+    "message_contains": "Function 'add' expects 2 arguments"
+  },
+  "notes_contains": [
+    "'add' is defined here"
+  ]
+}

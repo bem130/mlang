@@ -1,0 +1,13 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "is_divisible_by", "params": ["i32", "i32"], "return_type": "bool"},
+    {"name": "is_leap_year", "params": ["i32"], "return_type": "bool"},
+    {"name": "test_logic", "params": [], "return_type": "unit"},
+    {"name": "repeat_char", "params": ["string", "i32"], "return_type": "string"},
+    {"name": "test_string_building", "params": [], "return_type": "unit"},
+    {"name": "generate_fiscal_report", "params": ["i32", "i32"], "return_type": "string"},
+    {"name": "test_integration", "params": [], "return_type": "unit"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ]
+}

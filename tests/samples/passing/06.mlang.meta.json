@@ -1,0 +1,12 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "test_type_shadowing", "params": [], "return_type": "unit"},
+    {"name": "test_nested_expressions", "params": [], "return_type": "unit"},
+    {"name": "do_nothing", "params": [], "return_type": "unit"},
+    {"name": "test_unit_type", "params": [], "return_type": "unit"},
+    {"name": "is_even", "params": ["i32"], "return_type": "bool"},
+    {"name": "is_odd", "params": ["i32"], "return_type": "bool"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ]
+}

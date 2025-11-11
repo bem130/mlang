@@ -1,0 +1,8 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "is_multiple_of", "params": ["i32", "i32"], "return_type": "bool"},
+    {"name": "calculate_sum_recursive", "params": ["i32", "i32", "i32"], "return_type": "i32"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ]
+}

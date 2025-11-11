@@ -1,0 +1,8 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "modulo", "params": ["i32", "i32"], "return_type": "i32"},
+    {"name": "gcd", "params": ["i32", "i32"], "return_type": "i32"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ]
+}

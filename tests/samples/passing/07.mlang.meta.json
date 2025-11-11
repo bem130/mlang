@@ -1,0 +1,11 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "is_divisible_by", "params": ["i32", "i32"], "return_type": "bool"},
+    {"name": "has_divisor_from", "params": ["i32", "i32"], "return_type": "bool"},
+    {"name": "is_prime", "params": ["i32"], "return_type": "bool"},
+    {"name": "find_primes_down_from", "params": ["i32"], "return_type": "unit"},
+    {"name": "do_nothing", "params": [], "return_type": "unit"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ]
+}
