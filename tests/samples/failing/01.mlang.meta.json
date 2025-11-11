@@ -1,0 +1,7 @@
+{
+  "expect": "error",
+  "error": {
+    "variant": "compile",
+    "message_contains": "If branches must have the same type"
+  }
+}

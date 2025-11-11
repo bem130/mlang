@@ -1,0 +1,7 @@
+{
+  "expect": "error",
+  "error": {
+    "variant": "compile",
+    "message_contains": "Cannot assign to immutable variable 'value'"
+  }
+}

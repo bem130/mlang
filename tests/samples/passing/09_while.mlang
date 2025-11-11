@@ -4,7 +4,7 @@ fn main() {
     while $counter < 3$ {
         println(i32_to_string(counter));
         counter = $counter + 1$;
-    }
+    };
 
     let mut sum = 0;
     while $sum < 6$ {
@@ -15,7 +15,7 @@ fn main() {
         } else {
             println("never happens");
         }
-    }
+    };
 
     println("loops complete");
 }

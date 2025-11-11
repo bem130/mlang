@@ -1,0 +1,7 @@
+{
+  "expect": "error",
+  "error": {
+    "variant": "compile",
+    "message_contains": "Type mismatch in assignment to 'flag'"
+  }
+}
