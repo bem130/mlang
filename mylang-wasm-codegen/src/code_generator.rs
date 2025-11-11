@@ -244,6 +244,18 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
                 }
             }
         }
+        TypedExprKind::While { condition, body } => {
+            generator.wat_buffer.push_str("    ;; While\n");
+            generator.wat_buffer.push_str("    block ;; while exit\n");
+            generator.wat_buffer.push_str("      loop ;; while loop\n");
+            generate_expr(generator, condition)?;
+            generator.wat_buffer.push_str("        i32.eqz\n");
+            generator.wat_buffer.push_str("        br_if 1\n");
+            generate_expr(generator, body)?;
+            generator.wat_buffer.push_str("        br 0\n");
+            generator.wat_buffer.push_str("      end\n");
+            generator.wat_buffer.push_str("    end\n");
+        }
     }
     Ok(())
 }
@@ -280,6 +292,10 @@ fn body_uses_print(expr: &TypedExpr) -> bool {
                     find_prints(stmt, uses);
                 }
             }
+            TypedExprKind::While { condition, body } => {
+                find_prints(condition, uses);
+                find_prints(body, uses);
+            }
             _ => {}
         }
     }
@@ -312,6 +328,10 @@ pub fn collect_and_declare_locals(generator: &mut WasmGenerator, typed_body: &Ty
                 for stmt in statements {
                     find_lets(stmt, locals);
                 }
+            }
+            TypedExprKind::While { condition, body } => {
+                find_lets(condition, locals);
+                find_lets(body, locals);
             }
             TypedExprKind::FunctionCall { args, .. } => {
                 for arg in args {

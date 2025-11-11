@@ -11,6 +11,7 @@ pub enum Token {
     Mut,
     If,
     Else,
+    While,
     True,
     False,
 
@@ -57,6 +58,7 @@ impl Token {
             "mut" => Some(Token::Mut),
             "if" => Some(Token::If),
             "else" => Some(Token::Else),
+            "while" => Some(Token::While),
             "true" => Some(Token::True),
             "false" => Some(Token::False),
             _ => None,

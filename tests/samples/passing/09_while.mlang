@@ -1,0 +1,21 @@
+// Demonstrates nested scopes and mutation inside `while` loops.
+fn main() {
+    let mut counter = 0;
+    while $counter < 3$ {
+        println(i32_to_string(counter));
+        counter = $counter + 1$;
+    }
+
+    let mut sum = 0;
+    while $sum < 6$ {
+        let previous = sum;
+        sum = $sum + 2$;
+        if $sum > previous$ {
+            println("looping");
+        } else {
+            println("never happens");
+        }
+    }
+
+    println("loops complete");
+}
