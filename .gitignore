@@ -2,3 +2,6 @@
 /tmp
 out.wasm
 out.wat
+/playground/node_modules
+/playground/dist
+/playground/pkg
