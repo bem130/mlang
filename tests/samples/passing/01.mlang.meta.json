@@ -1,0 +1,19 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "factorial", "params": ["i32"], "return_type": "i32"},
+    {"name": "is_even", "params": ["i32"], "return_type": "bool"},
+    {"name": "is_odd", "params": ["i32"], "return_type": "bool"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "--- mylang advanced test start ---",
+    "1. Factorial of 5 is: 120",
+    "   Factorial of 7 is: 5040",
+    "2. Is 10 even? -> true",
+    "   Is 11 odd? -> true",
+    "3. Generating report for score: 85",
+    "Result: Passed, Grade: B (Good)",
+    "--- mylang advanced test finished ---"
+  ]
+}

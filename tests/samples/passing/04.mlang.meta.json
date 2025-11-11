@@ -1,0 +1,16 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "modulo", "params": ["i32", "i32"], "return_type": "i32"},
+    {"name": "gcd", "params": ["i32", "i32"], "return_type": "i32"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "--- Algorithm Showcase: Euclidean Algorithm for GCD ---",
+    "",
+    "GCD of 48 and 18 is: 6",
+    "GCD of 1071 and 462 is: 21",
+    "",
+    "Successfully calculated GCDs!"
+  ]
+}

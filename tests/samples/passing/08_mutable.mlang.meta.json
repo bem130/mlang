@@ -1,0 +1,9 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "count is 1"
+  ]
+}

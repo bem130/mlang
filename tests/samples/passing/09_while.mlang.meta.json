@@ -1,0 +1,15 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "0",
+    "1",
+    "2",
+    "looping",
+    "looping",
+    "looping",
+    "loops complete"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "test_type_shadowing", "params": [], "return_type": "unit"},
+    {"name": "test_nested_expressions", "params": [], "return_type": "unit"},
+    {"name": "do_nothing", "params": [], "return_type": "unit"},
+    {"name": "test_unit_type", "params": [], "return_type": "unit"},
+    {"name": "is_even", "params": ["i32"], "return_type": "bool"},
+    {"name": "is_odd", "params": ["i32"], "return_type": "bool"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "--- mylang edge-case test suite start ---",
+    "--- 1. Testing Type Shadowing ---",
+    "  - Before block, x (i32) = 100",
+    "  - Inside block, x (string) = shadow_string",
+    "    - Deeper inside, x (bool) = true",
+    "  - After block, x (i32) = 100",
+    "--- 2. Testing Deeply Nested Expressions ---",
+    "  - Result of nested expression: 150",
+    "--- 3. Testing Unit Type '()' Handling ---",
+    "  - 'do_nothing()' was called successfully.",
+    "  - Unit-returning expressions were handled successfully.",
+    "--- mylang edge-case test suite finished ---"
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "is_divisible_by", "params": ["i32", "i32"], "return_type": "bool"},
+    {"name": "has_divisor_from", "params": ["i32", "i32"], "return_type": "bool"},
+    {"name": "is_prime", "params": ["i32"], "return_type": "bool"},
+    {"name": "find_primes_down_from", "params": ["i32"], "return_type": "unit"},
+    {"name": "do_nothing", "params": [], "return_type": "unit"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "--- Prime Number Finder ---",
+    "Finding all prime numbers up to 100",
+    "",
+    "Found prime: 2",
+    "Found prime: 3",
+    "Found prime: 5",
+    "Found prime: 7",
+    "Found prime: 11",
+    "Found prime: 13",
+    "Found prime: 17",
+    "Found prime: 19",
+    "Found prime: 23",
+    "Found prime: 29",
+    "Found prime: 31",
+    "Found prime: 37",
+    "Found prime: 41",
+    "Found prime: 43",
+    "Found prime: 47",
+    "Found prime: 53",
+    "Found prime: 59",
+    "Found prime: 61",
+    "Found prime: 67",
+    "Found prime: 71",
+    "Found prime: 73",
+    "Found prime: 79",
+    "Found prime: 83",
+    "Found prime: 89",
+    "Found prime: 97",
+    "",
+    "--- Search finished. ---"
+  ]
+}
