@@ -171,3 +171,160 @@
     i32.store offset=8
     local.get $header_ptr
   )
+
+  (func $__string_char_at (param $header_ptr i32) (param $index i32) (result i32)
+    (local $data_ptr i32) (local $len i32) (local $char_value i32)
+    (local $char_data_ptr i32) (local $result_header i32)
+    local.get $header_ptr
+    i32.load offset=4
+    local.set $len
+    local.get $index
+    i32.const 0
+    i32.lt_s
+    local.get $index
+    local.get $len
+    i32.ge_s
+    i32.or
+    if
+      unreachable
+    end
+    local.get $header_ptr
+    i32.load offset=0
+    local.set $data_ptr
+    local.get $data_ptr
+    local.get $index
+    i32.add
+    i32.load8_u
+    local.set $char_value
+    i32.const 1
+    call $__alloc
+    local.set $char_data_ptr
+    local.get $char_data_ptr
+    local.get $char_value
+    i32.store8
+    i32.const 12
+    call $__alloc
+    local.set $result_header
+    local.get $result_header
+    local.get $char_data_ptr
+    i32.store offset=0
+    local.get $result_header
+    i32.const 1
+    i32.store offset=4
+    local.get $result_header
+    i32.const 1
+    i32.store offset=8
+    local.get $result_header
+  )
+
+  (func $__vec_new_i32 (result i32)
+    (local $data_ptr i32) (local $header_ptr i32)
+    i32.const 16
+    call $__alloc
+    local.set $data_ptr
+    i32.const 12
+    call $__alloc
+    local.set $header_ptr
+    local.get $header_ptr
+    local.get $data_ptr
+    i32.store offset=0
+    local.get $header_ptr
+    i32.const 0
+    i32.store offset=4
+    local.get $header_ptr
+    i32.const 4
+    i32.store offset=8
+    local.get $header_ptr
+  )
+
+  (func $__vec_push_i32 (param $vec i32) (param $value i32)
+    (local $data_ptr i32) (local $len i32) (local $cap i32)
+    (local $new_cap i32) (local $new_data_ptr i32)
+    local.get $vec
+    i32.load offset=0
+    local.set $data_ptr
+    local.get $vec
+    i32.load offset=4
+    local.set $len
+    local.get $vec
+    i32.load offset=8
+    local.set $cap
+    local.get $len
+    local.get $cap
+    i32.eq
+    if
+      local.get $cap
+      i32.const 2
+      i32.mul
+      local.set $new_cap
+      local.get $new_cap
+      i32.const 0
+      i32.eq
+      if
+        i32.const 4
+        local.set $new_cap
+      end
+      local.get $new_cap
+      i32.const 4
+      i32.mul
+      call $__alloc
+      local.set $new_data_ptr
+      local.get $new_data_ptr
+      local.get $data_ptr
+      local.get $len
+      i32.const 4
+      i32.mul
+      memory.copy
+      local.get $vec
+      local.get $new_data_ptr
+      i32.store offset=0
+      local.get $vec
+      local.get $new_cap
+      i32.store offset=8
+      local.get $new_data_ptr
+      local.set $data_ptr
+    end
+    local.get $data_ptr
+    local.get $len
+    i32.const 4
+    i32.mul
+    i32.add
+    local.get $value
+    i32.store
+    local.get $vec
+    local.get $len
+    i32.const 1
+    i32.add
+    i32.store offset=4
+  )
+
+  (func $__vec_get_i32 (param $vec i32) (param $index i32) (result i32)
+    (local $len i32) (local $data_ptr i32)
+    local.get $vec
+    i32.load offset=4
+    local.set $len
+    local.get $index
+    i32.const 0
+    i32.lt_s
+    local.get $index
+    local.get $len
+    i32.ge_s
+    i32.or
+    if
+      unreachable
+    end
+    local.get $vec
+    i32.load offset=0
+    local.set $data_ptr
+    local.get $data_ptr
+    local.get $index
+    i32.const 4
+    i32.mul
+    i32.add
+    i32.load
+  )
+
+  (func $__vec_len_i32 (param $vec i32) (result i32)
+    local.get $vec
+    i32.load offset=4
+  )

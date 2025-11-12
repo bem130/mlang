@@ -65,7 +65,7 @@ impl Parser {
             loop {
                 let (param_name, param_span) = self.consume_identifier()?;
                 self.consume(Token::Colon)?;
-                let (type_name, type_span) = self.consume_identifier()?;
+                let (type_name, type_span) = self.parse_type_name()?;
                 params.push(((param_name, param_span), (type_name, type_span)));
 
                 if !self.check_and_consume(Token::Comma) {
@@ -78,7 +78,7 @@ impl Parser {
 
         // 戻り値の型 (オプショナル)
         let return_type = if self.check_and_consume(Token::Arrow) {
-            let type_token = self.consume_identifier()?;
+            let type_token = self.parse_type_name()?;
             Some((type_token.0.clone(), type_token.1))
         } else {
             None
@@ -105,7 +105,7 @@ impl Parser {
         while self.peek() != Some(&Token::RBrace) {
             let (field_name, field_span) = self.consume_identifier()?;
             self.consume(Token::Colon)?;
-            let (type_name, type_span) = self.consume_identifier()?;
+            let (type_name, type_span) = self.parse_type_name()?;
             fields.push(RawStructField {
                 name: (field_name, field_span),
                 type_name: (type_name, type_span),
@@ -144,7 +144,7 @@ impl Parser {
                 let mut fields = Vec::new();
                 if self.peek() != Some(&Token::RParen) {
                     loop {
-                        let (type_name, type_span) = self.consume_identifier()?;
+                        let (type_name, type_span) = self.parse_type_name()?;
                         fields.push((type_name, type_span));
                         if !self.check_and_consume(Token::Comma) {
                             break;
@@ -525,8 +525,36 @@ impl Parser {
     /// `: type` 型注釈をパースする
     fn parse_type_annotation(&mut self) -> Result<RawExprPart, LangError> {
         self.consume(Token::Colon)?;
-        let (type_name, type_span) = self.consume_identifier()?;
+        let (type_name, type_span) = self.parse_type_name()?;
         Ok(RawExprPart::TypeAnnotation(type_name, type_span))
+    }
+
+    fn parse_type_name(&mut self) -> Result<(String, Span), LangError> {
+        let (base_name, base_span) = self.consume_identifier()?;
+        let mut name = base_name.clone();
+        let mut end_span = base_span;
+
+        if self.peek() == Some(&Token::LessThan) {
+            self.consume(Token::LessThan)?;
+            name.push('<');
+            let mut first = true;
+            loop {
+                let (inner_name, _inner_span) = self.parse_type_name()?;
+                if !first {
+                    name.push(',');
+                }
+                name.push_str(&inner_name);
+                first = false;
+                if !self.check_and_consume(Token::Comma) {
+                    break;
+                }
+            }
+            let greater_span = self.consume(Token::GreaterThan)?.1;
+            name.push('>');
+            end_span = greater_span;
+        }
+
+        Ok((name, combine_spans(base_span, end_span)))
     }
 
     /// `( ... )` で囲まれたS式グループをパースする
@@ -616,12 +644,24 @@ impl Parser {
                 })?
                 .clone();
             match token {
-                Token::IntLiteral(_) | Token::FloatLiteral(_) => {
+                Token::IntLiteral(_) | Token::FloatLiteral(_) | Token::True | Token::False => {
                     let (t, s) = self.advance();
                     match t {
                         Token::IntLiteral(v) => MathAstNode::Literal(MathLiteral::Int(v), s),
                         Token::FloatLiteral(v) => MathAstNode::Literal(MathLiteral::Float(v), s),
+                        Token::True => MathAstNode::Literal(MathLiteral::Bool(true), s),
+                        Token::False => MathAstNode::Literal(MathLiteral::Bool(false), s),
                         _ => unreachable!(),
+                    }
+                }
+                Token::Bang | Token::Minus => {
+                    let (op_token, op_span) = self.advance();
+                    let operand = self.parse_math_expression(6)?;
+                    let span = combine_spans(op_span, operand.span());
+                    MathAstNode::PrefixOp {
+                        op: op_token,
+                        expr: Box::new(operand),
+                        span,
                     }
                 }
                 Token::Identifier(name) => {
@@ -717,14 +757,16 @@ impl Parser {
     /// トークン自体から優先順位を返す
     fn get_token_precedence(&self, token: &Token) -> u8 {
         match token {
+            Token::OrOr => 1,
+            Token::AndAnd => 2,
             Token::EqualsEquals
             | Token::BangEquals
             | Token::LessThan
             | Token::LessThanEquals
             | Token::GreaterThan
-            | Token::GreaterThanEquals => 1,
-            Token::Plus | Token::Minus => 2,
-            Token::Star | Token::Slash => 3,
+            | Token::GreaterThanEquals => 3,
+            Token::Plus | Token::Minus => 4,
+            Token::Star | Token::Slash | Token::Percent => 5,
             _ => 0,
         }
     }

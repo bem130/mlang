@@ -40,10 +40,16 @@ pub enum Token {
     Semicolon,   // ;
 
     // Operators
-    Plus,  // +
-    Minus, // -
-    Star,  // *
-    Slash, // /
+    Plus,    // +
+    Minus,   // -
+    Star,    // *
+    Slash,   // /
+    Percent, // %
+
+    // Logical operators
+    AndAnd, // &&
+    OrOr,   // ||
+    Bang,   // !
 
     // Comparison Operators
     EqualsEquals,      // ==

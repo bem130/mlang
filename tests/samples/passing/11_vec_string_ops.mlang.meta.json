@@ -1,0 +1,11 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "First element: 42",
+    "Third char: l",
+    "Length: 2"
+  ]
+}

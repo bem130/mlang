@@ -7,6 +7,7 @@ pub mod analyzer;
 use crate::ast::*;
 use crate::error::{CompileError, LangError};
 use crate::span::Span;
+use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -108,6 +109,14 @@ impl Analyzer {
                 definition_span: Span::default(),
             },
         );
+        function_table.insert(
+            "string_char_at".to_string(),
+            FunctionSignature {
+                param_types: alloc::vec![DataType::String, DataType::I32],
+                return_type: DataType::String,
+                definition_span: Span::default(),
+            },
+        );
 
         let mut analyzer = Self {
             scope_depth: 0,
@@ -123,6 +132,8 @@ impl Analyzer {
 
         // printlnが内部的に使用する改行文字を静的領域に事前登録しておく
         analyzer.ensure_string_is_statically_allocated(&"\n".to_string());
+
+        analyzer.register_vec_builtins("i32", DataType::I32);
 
         analyzer
     }
@@ -325,6 +336,17 @@ impl Analyzer {
             "string" => Ok(DataType::String),
             "()" => Ok(DataType::Unit),
             _ => {
+                if let Some(inner) = s.strip_prefix("Vec<") {
+                    if !inner.ends_with('>') {
+                        return Err(LangError::Compile(CompileError::new(
+                            format!("Malformed Vec type '{}': missing closing '>'", s),
+                            span,
+                        )));
+                    }
+                    let inner_type_str = &inner[..inner.len() - 1];
+                    let inner_type = self.string_to_type(inner_type_str, span)?;
+                    return Ok(DataType::Vector(Box::new(inner_type)));
+                }
                 if self.struct_table.contains_key(s) {
                     Ok(DataType::Struct(s.to_string()))
                 } else if self.enum_table.contains_key(s) {
@@ -355,5 +377,41 @@ impl Analyzer {
         self.string_headers
             .insert(s.clone(), (data_offset, header_offset));
         header_offset
+    }
+
+    fn register_vec_builtins(&mut self, suffix: &str, element_type: DataType) {
+        let vec_type = DataType::Vector(Box::new(element_type.clone()));
+        self.function_table.insert(
+            format!("vec_new_{}", suffix),
+            FunctionSignature {
+                param_types: alloc::vec![],
+                return_type: vec_type.clone(),
+                definition_span: Span::default(),
+            },
+        );
+        self.function_table.insert(
+            format!("vec_push_{}", suffix),
+            FunctionSignature {
+                param_types: alloc::vec![vec_type.clone(), element_type.clone()],
+                return_type: DataType::Unit,
+                definition_span: Span::default(),
+            },
+        );
+        self.function_table.insert(
+            format!("vec_get_{}", suffix),
+            FunctionSignature {
+                param_types: alloc::vec![vec_type.clone(), DataType::I32],
+                return_type: element_type.clone(),
+                definition_span: Span::default(),
+            },
+        );
+        self.function_table.insert(
+            format!("vec_len_{}", suffix),
+            FunctionSignature {
+                param_types: alloc::vec![vec_type],
+                return_type: DataType::I32,
+                definition_span: Span::default(),
+            },
+        );
     }
 }

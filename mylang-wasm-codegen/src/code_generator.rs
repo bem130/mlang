@@ -150,6 +150,35 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
                     generator.wat_buffer.push_str("    call $__i32_to_string\n");
                     return Ok(());
                 }
+                "string_char_at" => {
+                    generate_expr(generator, &args[0])?;
+                    generate_expr(generator, &args[1])?;
+                    generator
+                        .wat_buffer
+                        .push_str("    call $__string_char_at\n");
+                    return Ok(());
+                }
+                "vec_new_i32" => {
+                    generator.wat_buffer.push_str("    call $__vec_new_i32\n");
+                    return Ok(());
+                }
+                "vec_push_i32" => {
+                    generate_expr(generator, &args[0])?;
+                    generate_expr(generator, &args[1])?;
+                    generator.wat_buffer.push_str("    call $__vec_push_i32\n");
+                    return Ok(());
+                }
+                "vec_get_i32" => {
+                    generate_expr(generator, &args[0])?;
+                    generate_expr(generator, &args[1])?;
+                    generator.wat_buffer.push_str("    call $__vec_get_i32\n");
+                    return Ok(());
+                }
+                "vec_len_i32" => {
+                    generate_expr(generator, &args[0])?;
+                    generator.wat_buffer.push_str("    call $__vec_len_i32\n");
+                    return Ok(());
+                }
                 "print" => {
                     generate_expr(generator, &args[0])?;
                     generate_print_logic(generator);
@@ -379,6 +408,7 @@ fn type_size_and_align(data_type: &DataType) -> (u32, u32) {
         DataType::I32
         | DataType::Bool
         | DataType::String
+        | DataType::Vector(_)
         | DataType::Tuple(_)
         | DataType::Struct(_)
         | DataType::Enum(_) => (4, 4),

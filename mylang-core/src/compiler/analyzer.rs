@@ -673,6 +673,11 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
                 data_type: DataType::F64,
                 span: *span,
             }),
+            MathLiteral::Bool(val) => Ok(TypedExpr {
+                kind: TypedExprKind::Literal(LiteralValue::Bool(*val)),
+                data_type: DataType::Bool,
+                span: *span,
+            }),
         },
         MathAstNode::Variable(name, span) => {
             if let Some(entry) = analyzer.find_variable(name) {
@@ -714,16 +719,28 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
                 (Token::Minus, DataType::I32) => ("i32.sub", DataType::I32),
                 (Token::Star, DataType::I32) => ("i32.mul", DataType::I32),
                 (Token::Slash, DataType::I32) => ("i32.div_s", DataType::I32),
+                (Token::Percent, DataType::I32) => ("i32.rem_s", DataType::I32),
                 (Token::Plus, DataType::F64) => ("f64.add", DataType::F64),
                 (Token::Minus, DataType::F64) => ("f64.sub", DataType::F64),
                 (Token::Star, DataType::F64) => ("f64.mul", DataType::F64),
                 (Token::Slash, DataType::F64) => ("f64.div", DataType::F64),
+                (Token::Percent, DataType::F64) => ("f64.rem", DataType::F64),
                 (Token::EqualsEquals, DataType::I32) => ("i32.eq", DataType::Bool),
+                (Token::EqualsEquals, DataType::F64) => ("f64.eq", DataType::Bool),
+                (Token::EqualsEquals, DataType::Bool) => ("i32.eq", DataType::Bool),
                 (Token::BangEquals, DataType::I32) => ("i32.ne", DataType::Bool),
+                (Token::BangEquals, DataType::F64) => ("f64.ne", DataType::Bool),
+                (Token::BangEquals, DataType::Bool) => ("i32.ne", DataType::Bool),
                 (Token::LessThan, DataType::I32) => ("i32.lt_s", DataType::Bool),
                 (Token::LessThanEquals, DataType::I32) => ("i32.le_s", DataType::Bool),
                 (Token::GreaterThan, DataType::I32) => ("i32.gt_s", DataType::Bool),
                 (Token::GreaterThanEquals, DataType::I32) => ("i32.ge_s", DataType::Bool),
+                (Token::LessThan, DataType::F64) => ("f64.lt", DataType::Bool),
+                (Token::LessThanEquals, DataType::F64) => ("f64.le", DataType::Bool),
+                (Token::GreaterThan, DataType::F64) => ("f64.gt", DataType::Bool),
+                (Token::GreaterThanEquals, DataType::F64) => ("f64.ge", DataType::Bool),
+                (Token::AndAnd, DataType::Bool) => ("i32.and", DataType::Bool),
+                (Token::OrOr, DataType::Bool) => ("i32.or", DataType::Bool),
                 _ => {
                     return Err(LangError::Compile(CompileError::new(
                         format!(
@@ -742,6 +759,49 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
                 data_type: result_type,
                 span: *span,
             })
+        }
+        MathAstNode::PrefixOp { op, expr, span } => {
+            let typed_expr = analyze_math_node(analyzer, expr)?;
+            match (op, &typed_expr.data_type) {
+                (Token::Bang, DataType::Bool) => Ok(TypedExpr {
+                    kind: TypedExprKind::FunctionCall {
+                        name: "i32.eqz".to_string(),
+                        args: alloc::vec![typed_expr],
+                    },
+                    data_type: DataType::Bool,
+                    span: *span,
+                }),
+                (Token::Minus, DataType::I32) => {
+                    let zero = TypedExpr {
+                        kind: TypedExprKind::Literal(LiteralValue::I32(0)),
+                        data_type: DataType::I32,
+                        span: *span,
+                    };
+                    Ok(TypedExpr {
+                        kind: TypedExprKind::FunctionCall {
+                            name: "i32.sub".to_string(),
+                            args: alloc::vec![zero, typed_expr],
+                        },
+                        data_type: DataType::I32,
+                        span: *span,
+                    })
+                }
+                (Token::Minus, DataType::F64) => Ok(TypedExpr {
+                    kind: TypedExprKind::FunctionCall {
+                        name: "f64.neg".to_string(),
+                        args: alloc::vec![typed_expr],
+                    },
+                    data_type: DataType::F64,
+                    span: *span,
+                }),
+                _ => Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "Operator `{:?}` is not supported for type '{}'",
+                        op, typed_expr.data_type
+                    ),
+                    *span,
+                ))),
+            }
         }
         MathAstNode::Call { name, args, span } => {
             let signature = analyzer
