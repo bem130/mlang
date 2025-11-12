@@ -19,6 +19,18 @@ body {
   color: #ffffff;
 }
 
+.page-header__inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.page-header__intro {
+  max-width: 48rem;
+}
+
 .page-header h1 {
   margin: 0;
   font-size: clamp(1.75rem, 4vw, 2.5rem);
@@ -26,6 +38,37 @@ body {
 
 .page-header p {
   margin: 0.5rem 0 0;
+}
+
+.page-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.page-header__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.55rem 1.25rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.page-header__link::after {
+  content: "↗";
+  font-size: 0.85em;
+}
+
+.page-header__link:hover,
+.page-header__link:focus-visible {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
 }
 
 .page-footer {
