@@ -22,6 +22,7 @@ pub struct WasmGenerator {
     temp_local_counter: usize,
     match_value_locals: BTreeMap<usize, (String, DataType)>,
     tuple_temp_locals: BTreeMap<usize, String>,
+    match_tuple_locals: BTreeMap<usize, (String, DataType)>,
 }
 
 impl WasmGenerator {
@@ -38,6 +39,7 @@ impl WasmGenerator {
             temp_local_counter: 0,
             match_value_locals: BTreeMap::new(),
             tuple_temp_locals: BTreeMap::new(),
+            match_tuple_locals: BTreeMap::new(),
         }
     }
 
@@ -181,9 +183,24 @@ impl WasmGenerator {
         name
     }
 
+    pub(crate) fn tuple_pattern_local_for(
+        &mut self,
+        pattern_ptr: usize,
+        data_type: &DataType,
+    ) -> String {
+        if let Some(existing) = self.match_tuple_locals.get(&pattern_ptr) {
+            return existing.0.clone();
+        }
+        let name = format!("__match_tuple_{}", self.next_temp_index());
+        self.match_tuple_locals
+            .insert(pattern_ptr, (name.clone(), data_type.clone()));
+        name
+    }
+
     pub(crate) fn clear_temp_state(&mut self) {
         self.temp_local_counter = 0;
         self.match_value_locals.clear();
         self.tuple_temp_locals.clear();
+        self.match_tuple_locals.clear();
     }
 }

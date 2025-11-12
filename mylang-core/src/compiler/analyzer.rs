@@ -863,6 +863,8 @@ fn analyze_match_expr(
         });
     }
 
+    ensure_match_exhaustive(analyzer, &typed_value.data_type, &typed_arms, span)?;
+
     Ok(TypedExpr {
         kind: TypedExprKind::Match {
             value: Box::new(typed_value),
@@ -871,6 +873,102 @@ fn analyze_match_expr(
         data_type: result_type.unwrap_or(DataType::Unit),
         span,
     })
+}
+
+fn ensure_match_exhaustive(
+    analyzer: &Analyzer,
+    matched_type: &DataType,
+    arms: &[TypedMatchArm],
+    match_span: Span,
+) -> Result<(), LangError> {
+    if arms.iter().any(|arm| pattern_is_catch_all(&arm.pattern)) {
+        return Ok(());
+    }
+
+    match matched_type {
+        DataType::Enum(enum_name) => {
+            let enum_info = analyzer.enum_table.get(enum_name).ok_or_else(|| {
+                LangError::Compile(CompileError::new(
+                    format!("Unknown enum '{}'", enum_name),
+                    match_span,
+                ))
+            })?;
+
+            let mut covered = BTreeSet::new();
+            for arm in arms {
+                if let TypedPattern::EnumVariant { variant_name, .. } = &arm.pattern {
+                    covered.insert(variant_name.clone());
+                }
+            }
+
+            if covered.len() == enum_info.variants.len() {
+                Ok(())
+            } else {
+                let missing: Vec<_> = enum_info
+                    .variants
+                    .keys()
+                    .filter(|name| !covered.contains(*name))
+                    .cloned()
+                    .collect();
+                Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "Non-exhaustive match on enum '{}': missing variants {}",
+                        enum_name,
+                        missing.join(", ")
+                    ),
+                    match_span,
+                )))
+            }
+        }
+        DataType::Bool => {
+            let mut seen_true = false;
+            let mut seen_false = false;
+            for arm in arms {
+                if let TypedPattern::Literal(LiteralValue::Bool(value)) = &arm.pattern {
+                    if *value {
+                        seen_true = true;
+                    } else {
+                        seen_false = true;
+                    }
+                }
+            }
+
+            if seen_true && seen_false {
+                Ok(())
+            } else {
+                let mut missing = Vec::new();
+                if !seen_true {
+                    missing.push("true");
+                }
+                if !seen_false {
+                    missing.push("false");
+                }
+                Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "Non-exhaustive match on 'bool': add an arm for {} or use '_'",
+                        missing.join(" and ")
+                    ),
+                    match_span,
+                )))
+            }
+        }
+        other_type => Err(LangError::Compile(CompileError::new(
+            format!(
+                "Match expression on type '{}' is not exhaustive; add a '_' arm to cover remaining cases",
+                other_type
+            ),
+            match_span,
+        ))),
+    }
+}
+
+fn pattern_is_catch_all(pattern: &TypedPattern) -> bool {
+    match pattern {
+        TypedPattern::Wildcard => true,
+        TypedPattern::Binding { .. } => true,
+        TypedPattern::Tuple(elements) => elements.iter().all(pattern_is_catch_all),
+        _ => false,
+    }
 }
 
 fn analyze_pattern(

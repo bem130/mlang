@@ -362,7 +362,7 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
 
             generator
                 .wat_buffer
-                .push_str("      unreachable ;; Non-exhaustive match\n");
+                .push_str("      unreachable ;; Analyzer enforces exhaustiveness\n");
             generator.wat_buffer.push_str("    )\n");
         }
     }
@@ -516,6 +516,35 @@ fn generate_tuple_element_condition(
                 }
             }
         }
+        TypedPattern::Tuple(subpatterns) => {
+            if let DataType::Tuple(inner_types) = element_type {
+                if inner_types.len() != subpatterns.len() {
+                    return Err(LangError::Compile(CompileError::new(
+                        "Tuple pattern length does not match tuple value length",
+                        span,
+                    )));
+                }
+                let nested_local =
+                    generator.tuple_pattern_local_for(pattern as *const _ as usize, element_type);
+                emit_load_tuple_field(
+                    generator,
+                    tuple_local,
+                    offset,
+                    element_type,
+                    "        ",
+                    span,
+                )?;
+                generator
+                    .wat_buffer
+                    .push_str(&format!("        local.set ${}\n", nested_local));
+                generate_pattern_condition(generator, pattern, &nested_local, element_type, span)?;
+            } else {
+                return Err(LangError::Compile(CompileError::new(
+                    "Tuple pattern used on a non-tuple value",
+                    span,
+                )));
+            }
+        }
         _ => {
             return Err(LangError::Compile(CompileError::new(
                 "Only wildcard, binding, or literal tuple patterns are supported in code generation",
@@ -652,6 +681,30 @@ fn bind_pattern_values(
                                 .wat_buffer
                                 .push_str(&format!("        local.set ${}\n", name.1));
                         }
+                        TypedPattern::Tuple(_) => {
+                            let nested_local = generator.tuple_pattern_local_for(
+                                element_pattern as *const _ as usize,
+                                field_type,
+                            );
+                            emit_load_tuple_field(
+                                generator,
+                                scrutinee_local,
+                                offset,
+                                field_type,
+                                "        ",
+                                span,
+                            )?;
+                            generator
+                                .wat_buffer
+                                .push_str(&format!("        local.set ${}\n", nested_local));
+                            bind_pattern_values(
+                                generator,
+                                element_pattern,
+                                &nested_local,
+                                field_type,
+                                span,
+                            )?;
+                        }
                         TypedPattern::Wildcard | TypedPattern::Literal(_) => {}
                         _ => {
                             return Err(LangError::Compile(CompileError::new(
@@ -736,19 +789,37 @@ fn body_uses_print(expr: &TypedExpr) -> bool {
 pub fn collect_and_declare_locals(generator: &mut WasmGenerator, typed_body: &TypedExpr) {
     let mut locals: BTreeMap<String, DataType> = BTreeMap::new();
 
-    fn collect_pattern_locals(pattern: &TypedPattern, locals: &mut BTreeMap<String, DataType>) {
+    fn collect_pattern_locals(
+        generator: &mut WasmGenerator,
+        pattern: &TypedPattern,
+        value_type: Option<&DataType>,
+        locals: &mut BTreeMap<String, DataType>,
+    ) {
         match pattern {
             TypedPattern::Binding { name, data_type } => {
                 locals.insert(name.1.clone(), data_type.clone());
             }
             TypedPattern::Tuple(elements) => {
-                for element in elements {
-                    collect_pattern_locals(element, locals);
+                if let Some(DataType::Tuple(field_types)) = value_type {
+                    for (element, field_type) in elements.iter().zip(field_types.iter()) {
+                        if matches!(element, TypedPattern::Tuple(_)) {
+                            let local_name = generator
+                                .tuple_pattern_local_for(element as *const _ as usize, field_type);
+                            locals
+                                .entry(local_name.clone())
+                                .or_insert_with(|| field_type.clone());
+                        }
+                        collect_pattern_locals(generator, element, Some(field_type), locals);
+                    }
+                } else {
+                    for element in elements {
+                        collect_pattern_locals(generator, element, None, locals);
+                    }
                 }
             }
             TypedPattern::EnumVariant { fields, .. } => {
                 for field in fields {
-                    collect_pattern_locals(field, locals);
+                    collect_pattern_locals(generator, field, None, locals);
                 }
             }
             _ => {}
@@ -802,7 +873,7 @@ pub fn collect_and_declare_locals(generator: &mut WasmGenerator, typed_body: &Ty
                     .or_insert(scrutinee_type.clone());
                 find_lets(generator, value, locals);
                 for arm in arms {
-                    collect_pattern_locals(&arm.pattern, locals);
+                    collect_pattern_locals(generator, &arm.pattern, Some(&scrutinee_type), locals);
                     find_lets(generator, &arm.body, locals);
                 }
             }
