@@ -1,7 +1,7 @@
 //! mylangのTypedASTを受け取り、LLVM IRを生成するコードジェネレーター。
 
-use mylang_core::error::LangError;
 use mylang_core::AnalysisResult;
+use mylang_core::error::LangError;
 
 // プレースホルダーのエラー型
 #[derive(Debug, thiserror::Error)]

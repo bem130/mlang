@@ -22,6 +22,16 @@ pub enum RawAstNode {
         body: Box<RawAstNode>,
         span: Span,
     },
+    StructDef {
+        name: (String, Span),
+        fields: Vec<RawStructField>,
+        span: Span,
+    },
+    EnumDef {
+        name: (String, Span),
+        variants: Vec<RawEnumVariant>,
+        span: Span,
+    },
     // let束縛
     LetDef {
         name: (String, Span),
@@ -45,6 +55,50 @@ pub enum RawAstNode {
         body: Box<RawAstNode>,
         span: Span,
     },
+    Match {
+        value: Box<RawAstNode>,
+        arms: Vec<RawMatchArm>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct RawStructField {
+    pub name: (String, Span),
+    pub type_name: (String, Span),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum RawEnumVariantKind {
+    Unit,
+    Tuple(Vec<(String, Span)>),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct RawEnumVariant {
+    pub name: (String, Span),
+    pub kind: RawEnumVariantKind,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct RawMatchArm {
+    pub pattern: RawPattern,
+    pub body: Box<RawAstNode>,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum RawPattern {
+    Wildcard(Span),
+    Identifier((String, Span)),
+    Tuple(Vec<RawPattern>, Span),
+    Path {
+        segments: Vec<(String, Span)>,
+        subpatterns: Vec<RawPattern>,
+        span: Span,
+    },
+    Literal(Token, Span),
 }
 
 /// `RawAstNode::Expr`を構成する、意味が未解決の部品。
@@ -70,6 +124,7 @@ pub enum RawExprPart {
         else_branch: Box<RawAstNode>,
         span: Span,
     },
+    TupleLiteral(Vec<RawAstNode>, Span),
 }
 
 // 数式リテラルの種類
@@ -120,7 +175,24 @@ pub enum TypedAstNode {
         return_type: DataType,
         span: Span,
     },
+    StructDef {
+        name: String,
+        fields: Vec<(String, DataType)>,
+        span: Span,
+    },
+    EnumDef {
+        name: String,
+        variants: Vec<TypedEnumVariant>,
+        span: Span,
+    },
     // 将来的にトップレベルの`const`などもここに追加できる
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedEnumVariant {
+    pub name: String,
+    pub field_types: Vec<DataType>,
+    pub span: Span,
 }
 
 // 型付きの「式」を表すデータ構造
@@ -167,6 +239,35 @@ pub enum TypedExprKind {
         condition: Box<TypedExpr>,
         body: Box<TypedExpr>,
     },
+    TupleLiteral {
+        elements: Vec<TypedExpr>,
+    },
+    Match {
+        value: Box<TypedExpr>,
+        arms: Vec<TypedMatchArm>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedMatchArm {
+    pub pattern: TypedPattern,
+    pub body: TypedExpr,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypedPattern {
+    Wildcard,
+    Binding {
+        name: (String, String),
+        data_type: DataType,
+    },
+    Tuple(Vec<TypedPattern>),
+    EnumVariant {
+        enum_name: String,
+        variant_name: String,
+        fields: Vec<TypedPattern>,
+    },
+    Literal(LiteralValue),
 }
 
 // プログラム内で扱われるデータ型
@@ -177,6 +278,9 @@ pub enum DataType {
     Bool,
     String,
     Unit, // 値を返さないことを示す型
+    Tuple(Vec<DataType>),
+    Struct(String),
+    Enum(String),
 }
 
 // エラーメッセージで型名を綺麗に表示するためのDisplay実装
@@ -188,6 +292,18 @@ impl fmt::Display for DataType {
             DataType::Bool => write!(f, "bool"),
             DataType::String => write!(f, "string"),
             DataType::Unit => write!(f, "()"),
+            DataType::Tuple(types) => {
+                write!(f, "(")?;
+                for (i, ty) in types.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", ty)?;
+                }
+                write!(f, ")")
+            }
+            DataType::Struct(name) => write!(f, "{}", name),
+            DataType::Enum(name) => write!(f, "{}", name),
         }
     }
 }
@@ -198,10 +314,13 @@ impl RawAstNode {
         match self {
             RawAstNode::Expr(parts) => parts.first().unwrap().span(), // 簡易
             RawAstNode::FnDef { span, .. } => *span,
+            RawAstNode::StructDef { span, .. } => *span,
+            RawAstNode::EnumDef { span, .. } => *span,
             RawAstNode::LetDef { span, .. } => *span,
             RawAstNode::Assignment { span, .. } => *span,
             RawAstNode::Block { span, .. } => *span,
             RawAstNode::While { span, .. } => *span,
+            RawAstNode::Match { span, .. } => *span,
         }
     }
 }
@@ -214,6 +333,7 @@ impl RawExprPart {
             RawExprPart::MathBlock(_, span) => *span,
             RawExprPart::TypeAnnotation(_, span) => *span,
             RawExprPart::IfExpr { span, .. } => *span,
+            RawExprPart::TupleLiteral(_, span) => *span,
         }
     }
 }
@@ -224,6 +344,18 @@ impl MathAstNode {
             MathAstNode::Variable(_, span) => *span,
             MathAstNode::InfixOp { span, .. } => *span,
             MathAstNode::Call { span, .. } => *span,
+        }
+    }
+}
+
+impl RawPattern {
+    pub fn span(&self) -> Span {
+        match self {
+            RawPattern::Wildcard(span) => *span,
+            RawPattern::Identifier((_, span)) => *span,
+            RawPattern::Tuple(_, span) => *span,
+            RawPattern::Path { span, .. } => *span,
+            RawPattern::Literal(_, span) => *span,
         }
     }
 }

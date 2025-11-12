@@ -26,6 +26,8 @@ pub struct Analyzer {
     // これらのフィールドは残すが、コード生成は行わない。
     pub string_headers: BTreeMap<String, (u32, u32)>, // (data_offset, header_offset)
     pub static_offset: u32,
+    pub struct_table: BTreeMap<String, StructInfo>,
+    pub enum_table: BTreeMap<String, EnumInfo>,
 }
 
 #[derive(Clone)]
@@ -42,6 +44,24 @@ pub struct FunctionSignature {
     pub param_types: Vec<DataType>,
     pub return_type: DataType,
     pub definition_span: Span,
+}
+
+#[derive(Clone)]
+pub struct StructInfo {
+    pub fields: BTreeMap<String, DataType>,
+    pub span: Span,
+}
+
+#[derive(Clone)]
+pub struct EnumInfo {
+    pub variants: BTreeMap<String, EnumVariantInfo>,
+    pub span: Span,
+}
+
+#[derive(Clone)]
+pub struct EnumVariantInfo {
+    pub field_types: Vec<DataType>,
+    pub span: Span,
 }
 
 impl Analyzer {
@@ -97,6 +117,8 @@ impl Analyzer {
             string_headers: BTreeMap::new(),
             // メモリの先頭32バイトはIO用に予約
             static_offset: 32,
+            struct_table: BTreeMap::new(),
+            enum_table: BTreeMap::new(),
         };
 
         // printlnが内部的に使用する改行文字を静的領域に事前登録しておく
@@ -120,6 +142,23 @@ impl Analyzer {
 
     /// 1パス目: 関数宣言を収集し、シグネチャをテーブルに登録する
     fn prepass_declarations(&mut self, ast: &[RawAstNode]) -> Result<(), LangError> {
+        // まず構造体と列挙体の宣言を登録
+        for node in ast {
+            match node {
+                RawAstNode::StructDef { name, fields, span } => {
+                    self.register_struct(name, fields, *span)?;
+                }
+                RawAstNode::EnumDef {
+                    name,
+                    variants,
+                    span,
+                } => {
+                    self.register_enum(name, variants, *span)?;
+                }
+                _ => {}
+            }
+        }
+
         for node in ast {
             if let RawAstNode::FnDef {
                 name,
@@ -161,6 +200,109 @@ impl Analyzer {
         Ok(())
     }
 
+    fn register_struct(
+        &mut self,
+        name: &(String, Span),
+        fields: &[crate::ast::RawStructField],
+        span: Span,
+    ) -> Result<(), LangError> {
+        if self.struct_table.contains_key(&name.0)
+            || self.enum_table.contains_key(&name.0)
+            || self.function_table.contains_key(&name.0)
+        {
+            return Err(LangError::Compile(CompileError::new(
+                format!("Type or function '{}' is already defined", name.0),
+                name.1,
+            )));
+        }
+
+        self.struct_table.insert(
+            name.0.clone(),
+            StructInfo {
+                fields: BTreeMap::new(),
+                span,
+            },
+        );
+
+        let mut field_map = BTreeMap::new();
+        for field in fields {
+            if field_map.contains_key(&field.name.0) {
+                return Err(LangError::Compile(CompileError::new(
+                    format!("Duplicate field '{}' in struct '{}'", field.name.0, name.0),
+                    field.name.1,
+                )));
+            }
+            let field_type = self.string_to_type(&field.type_name.0, field.type_name.1)?;
+            field_map.insert(field.name.0.clone(), field_type);
+        }
+
+        if let Some(info) = self.struct_table.get_mut(&name.0) {
+            info.fields = field_map;
+            info.span = span;
+        }
+
+        Ok(())
+    }
+
+    fn register_enum(
+        &mut self,
+        name: &(String, Span),
+        variants: &[crate::ast::RawEnumVariant],
+        span: Span,
+    ) -> Result<(), LangError> {
+        if self.enum_table.contains_key(&name.0)
+            || self.struct_table.contains_key(&name.0)
+            || self.function_table.contains_key(&name.0)
+        {
+            return Err(LangError::Compile(CompileError::new(
+                format!("Type or function '{}' is already defined", name.0),
+                name.1,
+            )));
+        }
+
+        self.enum_table.insert(
+            name.0.clone(),
+            EnumInfo {
+                variants: BTreeMap::new(),
+                span,
+            },
+        );
+
+        let mut variant_map = BTreeMap::new();
+        for variant in variants {
+            if variant_map.contains_key(&variant.name.0) {
+                return Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "Duplicate variant '{}' in enum '{}'",
+                        variant.name.0, name.0
+                    ),
+                    variant.name.1,
+                )));
+            }
+            let mut field_types = Vec::new();
+            if let crate::ast::RawEnumVariantKind::Tuple(raw_fields) = &variant.kind {
+                for field in raw_fields {
+                    let ty = self.string_to_type(&field.0, field.1)?;
+                    field_types.push(ty);
+                }
+            }
+            variant_map.insert(
+                variant.name.0.clone(),
+                EnumVariantInfo {
+                    field_types,
+                    span: variant.span,
+                },
+            );
+        }
+
+        if let Some(info) = self.enum_table.get_mut(&name.0) {
+            info.variants = variant_map;
+            info.span = span;
+        }
+
+        Ok(())
+    }
+
     pub fn enter_scope(&mut self) {
         self.scope_depth += 1;
     }
@@ -182,10 +324,18 @@ impl Analyzer {
             "bool" => Ok(DataType::Bool),
             "string" => Ok(DataType::String),
             "()" => Ok(DataType::Unit),
-            _ => Err(LangError::Compile(CompileError::new(
-                format!("Unknown type '{}'", s),
-                span,
-            ))),
+            _ => {
+                if self.struct_table.contains_key(s) {
+                    Ok(DataType::Struct(s.to_string()))
+                } else if self.enum_table.contains_key(s) {
+                    Ok(DataType::Enum(s.to_string()))
+                } else {
+                    Err(LangError::Compile(CompileError::new(
+                        format!("Unknown type '{}'", s),
+                        span,
+                    )))
+                }
+            }
         }
     }
 
