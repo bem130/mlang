@@ -71,7 +71,7 @@ impl<'a> Lexer<'a> {
                 Ok(Some((token, span)))
             }
             // シンボルは識別子フラグをリセットする
-            ')' | '{' | '}' | '$' | ',' | ';' | '+' | '*' | '/' => {
+            ')' | '{' | '}' | '$' | ',' | ';' | '+' | '*' | '/' | '%' => {
                 self.last_char_was_ident_part = false;
                 let token = match char {
                     ')' => Token::RParen,
@@ -83,6 +83,7 @@ impl<'a> Lexer<'a> {
                     '+' => Token::Plus,
                     '*' => Token::Star,
                     '/' => Token::Slash,
+                    '%' => Token::Percent,
                     _ => unreachable!(),
                 };
                 Ok(Some((token, span)))
@@ -130,6 +131,24 @@ impl<'a> Lexer<'a> {
                 if self.peek() == Some(&'=') {
                     self.next_char();
                     Ok(Some((Token::BangEquals, span)))
+                } else {
+                    Ok(Some((Token::Bang, span)))
+                }
+            }
+            '&' => {
+                self.last_char_was_ident_part = false;
+                if self.peek() == Some(&'&') {
+                    self.next_char();
+                    Ok(Some((Token::AndAnd, span)))
+                } else {
+                    Err(format!("Unexpected character: {} at {}", char, span))
+                }
+            }
+            '|' => {
+                self.last_char_was_ident_part = false;
+                if self.peek() == Some(&'|') {
+                    self.next_char();
+                    Ok(Some((Token::OrOr, span)))
                 } else {
                     Err(format!("Unexpected character: {} at {}", char, span))
                 }

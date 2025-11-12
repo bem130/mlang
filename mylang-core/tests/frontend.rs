@@ -280,6 +280,7 @@ fn data_type_to_str(data_type: &DataType) -> String {
         DataType::F64 => "f64".to_string(),
         DataType::Bool => "bool".to_string(),
         DataType::String => "string".to_string(),
+        DataType::Vector(inner) => format!("Vec<{}>", data_type_to_str(inner)),
         DataType::Unit => "unit".to_string(),
         DataType::Tuple(elements) => {
             let inner = elements

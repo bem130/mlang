@@ -193,6 +193,8 @@ fn to_int(flag: bool) -> i32 {
         true => 1,
     }
 }
+
+
 "#;
 
     let err = match analyze_source(source) {
@@ -235,4 +237,169 @@ fn kind(x: i32) -> i32 {
         "unexpected error message: {}",
         compile_err.message
     );
+}
+
+#[test]
+fn math_block_supports_extended_ops() {
+    let source = r#"
+fn evaluate(a: bool, b: bool, value: i32) -> bool {
+    let remainder = $value % 3$;
+    let not_all = $!(a && b)$;
+    let comparison = $remainder == 0$;
+    $(not_all || comparison)$
+}
+"#;
+
+    let analysis = analyze_source(source).expect("analysis should succeed");
+    let function = analysis
+        .typed_ast
+        .iter()
+        .find_map(|node| match node {
+            TypedAstNode::FnDef { name, body, .. } if name == "evaluate" => Some(body),
+            _ => None,
+        })
+        .expect("function definition present");
+
+    let TypedExprKind::Block { statements } = &function.kind else {
+        panic!("function body should be a block");
+    };
+    assert_eq!(statements.len(), 4);
+
+    let remainder_binding = &statements[0];
+    match &remainder_binding.kind {
+        TypedExprKind::LetBinding { value, .. } => {
+            assert_eq!(value.data_type, DataType::I32);
+            if let TypedExprKind::FunctionCall { name, .. } = &value.kind {
+                assert_eq!(name, "i32.rem_s");
+            } else {
+                panic!("expected i32.rem_s call");
+            }
+        }
+        other => panic!("unexpected node: {:?}", other),
+    }
+
+    let not_all_binding = &statements[1];
+    match &not_all_binding.kind {
+        TypedExprKind::LetBinding { value, .. } => {
+            assert_eq!(value.data_type, DataType::Bool);
+            if let TypedExprKind::FunctionCall { name, .. } = &value.kind {
+                assert_eq!(name, "i32.eqz");
+            } else {
+                panic!("expected i32.eqz call");
+            }
+        }
+        other => panic!("unexpected node: {:?}", other),
+    }
+
+    let comparison_binding = &statements[2];
+    match &comparison_binding.kind {
+        TypedExprKind::LetBinding { value, .. } => {
+            assert_eq!(value.data_type, DataType::Bool);
+            if let TypedExprKind::FunctionCall { name, .. } = &value.kind {
+                assert_eq!(name, "i32.eq");
+            } else {
+                panic!("expected i32.eq call");
+            }
+        }
+        other => panic!("unexpected node: {:?}", other),
+    }
+
+    let final_expr = statements.last().expect("final expression present");
+    assert_eq!(final_expr.data_type, DataType::Bool);
+    if let TypedExprKind::FunctionCall { name, .. } = &final_expr.kind {
+        assert_eq!(name, "i32.or");
+    } else {
+        panic!("expected logical or call");
+    }
+}
+
+#[test]
+fn vec_builtins_typecheck() {
+    let source = r#"
+fn use_vec() -> i32 {
+    let mut numbers = vec_new_i32();
+    vec_push_i32(numbers, 10);
+    vec_push_i32(numbers, 20);
+    let second = vec_get_i32(numbers, 1);
+    let len = vec_len_i32(numbers);
+    if $len == 2$ {
+        second
+    } else {
+        0
+    }
+}
+"#;
+
+    let analysis = analyze_source(source).expect("analysis should succeed");
+    let function = analysis
+        .typed_ast
+        .iter()
+        .find_map(|node| match node {
+            TypedAstNode::FnDef { name, body, .. } if name == "use_vec" => Some(body),
+            _ => None,
+        })
+        .expect("function definition present");
+
+    let TypedExprKind::Block { statements } = &function.kind else {
+        panic!("function body should be a block");
+    };
+
+    let let_binding = &statements[0];
+    match &let_binding.kind {
+        TypedExprKind::LetBinding { name: _, value, .. } => {
+            assert_eq!(value.data_type, DataType::Vector(Box::new(DataType::I32)));
+            if let TypedExprKind::FunctionCall { name, .. } = &value.kind {
+                assert_eq!(name, "vec_new_i32");
+            } else {
+                panic!("expected vec_new_i32 call");
+            }
+        }
+        other => panic!("unexpected node: {:?}", other),
+    }
+
+    let len_binding = &statements[4];
+    match &len_binding.kind {
+        TypedExprKind::LetBinding { value, .. } => {
+            assert_eq!(value.data_type, DataType::I32);
+            if let TypedExprKind::FunctionCall { name, .. } = &value.kind {
+                assert_eq!(name, "vec_len_i32");
+            } else {
+                panic!("expected vec_len_i32 call");
+            }
+        }
+        other => panic!("unexpected node: {:?}", other),
+    }
+}
+
+#[test]
+fn string_char_at_is_typed() {
+    let source = r#"
+fn third(text: string) -> string {
+    string_char_at(text, 2)
+}
+"#;
+
+    let analysis = analyze_source(source).expect("analysis should succeed");
+    let function = analysis
+        .typed_ast
+        .iter()
+        .find_map(|node| match node {
+            TypedAstNode::FnDef { name, body, .. } if name == "third" => Some(body),
+            _ => None,
+        })
+        .expect("function definition present");
+
+    let TypedExprKind::Block { statements } = &function.kind else {
+        panic!("function body should be a block");
+    };
+    let call_expr = statements.last().expect("call expression present");
+    if let TypedExprKind::FunctionCall { name, args } = &call_expr.kind {
+        assert_eq!(name, "string_char_at");
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0].data_type, DataType::String);
+        assert_eq!(args[1].data_type, DataType::I32);
+    } else {
+        panic!("expected direct call expression");
+    }
+    assert_eq!(call_expr.data_type, DataType::String);
 }

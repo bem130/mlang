@@ -145,7 +145,8 @@ impl WasmGenerator {
             DataType::F64 => "f64",
             DataType::Bool => "i32",   // boolはi32として扱う
             DataType::String => "i32", // stringはヘッダポインタ(i32)として扱う
-            DataType::Unit => "",      // Unitは値を返さない
+            DataType::Vector(_) => "i32",
+            DataType::Unit => "", // Unitは値を返さない
             DataType::Tuple(_) | DataType::Struct(_) | DataType::Enum(_) => "i32",
         }
     }

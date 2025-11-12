@@ -132,6 +132,7 @@ pub enum RawExprPart {
 pub enum MathLiteral {
     Int(i64),
     Float(f64),
+    Bool(bool),
 }
 
 // 数式パーサー(Pratt)が生成する、より構造化されたAST
@@ -144,6 +145,11 @@ pub enum MathAstNode {
         op: Token,
         left: Box<MathAstNode>,
         right: Box<MathAstNode>,
+        span: Span,
+    },
+    PrefixOp {
+        op: Token,
+        expr: Box<MathAstNode>,
         span: Span,
     },
     // 数式ブロック内での関数呼び出しは `()` が必須
@@ -277,6 +283,7 @@ pub enum DataType {
     F64,
     Bool,
     String,
+    Vector(Box<DataType>),
     Unit, // 値を返さないことを示す型
     Tuple(Vec<DataType>),
     Struct(String),
@@ -291,6 +298,7 @@ impl fmt::Display for DataType {
             DataType::F64 => write!(f, "f64"),
             DataType::Bool => write!(f, "bool"),
             DataType::String => write!(f, "string"),
+            DataType::Vector(inner) => write!(f, "Vec<{}>", inner),
             DataType::Unit => write!(f, "()"),
             DataType::Tuple(types) => {
                 write!(f, "(")?;
@@ -343,6 +351,7 @@ impl MathAstNode {
             MathAstNode::Literal(_, span) => *span,
             MathAstNode::Variable(_, span) => *span,
             MathAstNode::InfixOp { span, .. } => *span,
+            MathAstNode::PrefixOp { span, .. } => *span,
             MathAstNode::Call { span, .. } => *span,
         }
     }
