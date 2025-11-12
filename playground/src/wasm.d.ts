@@ -17,8 +17,8 @@ declare module "../pkg/mlang_playground.js" {
   }
 
   export class RunResult {
-    wat(): string;
-    stdout(): string;
+    readonly wat: string;
+    readonly stdout: string;
     free(): void;
   }
 }
