@@ -145,11 +145,13 @@ runButton.addEventListener("click", async () => {
   try {
     await wasmReady;
     const result = runProgram(sourceInput.value);
-    watOutput.value = result.wat();
-    runOutput.value = result.stdout();
+    const wat = result.wat;
+    const stdout = result.stdout;
     if (typeof result.free === "function") {
       result.free();
     }
+    watOutput.value = wat;
+    runOutput.value = stdout;
     setStatus("実行が完了しました。");
   } catch (error) {
     setStatus(`実行に失敗しました: ${formatError(error)}`, true);
