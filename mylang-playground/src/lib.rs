@@ -1,7 +1,10 @@
 use mylang_core::analyze_source;
 use mylang_wasm_codegen::WasmGenerator;
 use wasm_bindgen::prelude::*;
-use wasmi::{core::Trap, Caller, Engine, Linker, Module, Store};
+use wasmi::{
+    core::{Trap, TrapCode},
+    Caller, Config, Engine, Instance, Linker, Module, Store, TypedFunc,
+};
 
 struct HostState {
     stdout: Vec<u8>,
@@ -17,6 +20,23 @@ impl Default for HostState {
 pub struct RunResult {
     wat: String,
     stdout: String,
+}
+
+#[wasm_bindgen]
+pub enum StepStatus {
+    InProgress,
+    Completed,
+}
+
+#[wasm_bindgen]
+pub struct StepRunner {
+    wat: String,
+    engine: Engine,
+    module: Module,
+    store: Store<HostState>,
+    instance: Instance,
+    start: TypedFunc<(), ()>,
+    finished: bool,
 }
 
 #[wasm_bindgen]
@@ -45,6 +65,78 @@ pub fn run(source: &str) -> Result<RunResult, JsValue> {
     Ok(RunResult { wat, stdout })
 }
 
+#[wasm_bindgen]
+impl StepRunner {
+    #[wasm_bindgen(constructor)]
+    pub fn new(source: &str) -> Result<StepRunner, JsValue> {
+        let wat = generate_wat(source).map_err(js_error)?;
+        StepRunner::from_wat(wat)
+    }
+
+    pub fn wat(&self) -> String {
+        self.wat.clone()
+    }
+
+    pub fn stdout(&self) -> String {
+        read_stdout(&self.store)
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.finished
+    }
+
+    pub fn step(&mut self, fuel: u64) -> Result<StepStatus, JsValue> {
+        if self.finished {
+            return Ok(StepStatus::Completed);
+        }
+
+        self
+            .store
+            .add_fuel(fuel)
+            .map_err(|error| js_error(error.to_string()))?;
+
+        match self.start.call(&mut self.store, ()) {
+            Ok(()) => {
+                self.finished = true;
+                Ok(StepStatus::Completed)
+            }
+            Err(trap) => match trap.trap_code() {
+                Some(TrapCode::OutOfFuel) => Ok(StepStatus::InProgress),
+                _ => Err(js_error(trap)),
+            },
+        }
+    }
+
+    pub fn reset(&mut self) -> Result<(), JsValue> {
+        let (store, instance, start) =
+            instantiate_module(&self.engine, &self.module).map_err(js_error)?;
+        self.store = store;
+        self.instance = instance;
+        self.start = start;
+        self.finished = false;
+        Ok(())
+    }
+
+    fn from_wat(wat: String) -> Result<StepRunner, JsValue> {
+        let mut config = Config::default();
+        config.consume_fuel(true);
+        let engine = Engine::new(&config);
+        let wasm_binary = wat::parse_str(&wat).map_err(js_error)?;
+        let module = Module::new(&engine, &*wasm_binary).map_err(js_error)?;
+        let (store, instance, start) = instantiate_module(&engine, &module).map_err(js_error)?;
+
+        Ok(StepRunner {
+            wat,
+            engine,
+            module,
+            store,
+            instance,
+            start,
+            finished: false,
+        })
+    }
+}
+
 fn generate_wat(source: &str) -> Result<String, String> {
     let analysis_result = analyze_source(source.trim()).map_err(|e| e.to_string())?;
 
@@ -61,8 +153,35 @@ fn generate_wat(source: &str) -> Result<String, String> {
 
 fn execute_wat(wat_code: &str) -> Result<String, String> {
     let engine = Engine::default();
-    let mut store = Store::new(&engine, HostState::default());
-    let mut linker = <Linker<HostState>>::new(&engine);
+    let wasm_binary = wat::parse_str(wat_code).map_err(|e| e.to_string())?;
+    let module = Module::new(&engine, &*wasm_binary).map_err(|e| e.to_string())?;
+    let (mut store, _instance, start) = instantiate_module(&engine, &module)?;
+
+    start.call(&mut store, ()).map_err(|e| e.to_string())?;
+
+    Ok(read_stdout(&store))
+}
+
+fn instantiate_module(
+    engine: &Engine,
+    module: &Module,
+) -> Result<(Store<HostState>, Instance, TypedFunc<(), ()>), String> {
+    let mut store = Store::new(engine, HostState::default());
+    let linker = create_linker(engine)?;
+    let instance = linker
+        .instantiate(&mut store, module)
+        .map_err(|e| e.to_string())?
+        .start(&mut store)
+        .map_err(|e| e.to_string())?;
+    let start = instance
+        .get_typed_func::<(), ()>(&store, "_start")
+        .map_err(|_| "Wasmモジュールに関数 '_start' が見つかりません".to_string())?;
+
+    Ok((store, instance, start))
+}
+
+fn create_linker(engine: &Engine) -> Result<Linker<HostState>, String> {
+    let mut linker = <Linker<HostState>>::new(engine);
 
     linker
         .func_wrap(
@@ -125,24 +244,13 @@ fn execute_wat(wat_code: &str) -> Result<String, String> {
         )
         .map_err(|e| e.to_string())?;
 
-    let wasm_binary = wat::parse_str(wat_code).map_err(|e| e.to_string())?;
-    let module = Module::new(&engine, &*wasm_binary).map_err(|e| e.to_string())?;
+    Ok(linker)
+}
 
-    let instance = linker
-        .instantiate(&mut store, &module)
-        .map_err(|e| e.to_string())?
-        .start(&mut store)
-        .map_err(|e| e.to_string())?;
+fn read_stdout(store: &Store<HostState>) -> String {
+    String::from_utf8_lossy(&store.data().stdout).into_owned()
+}
 
-    let start_func = instance
-        .get_func(&store, "_start")
-        .ok_or_else(|| "Wasmモジュールに関数 '_start' が見つかりません".to_string())?;
-
-    start_func
-        .call(&mut store, &[], &mut [])
-        .map_err(|e| e.to_string())?;
-
-    let output = String::from_utf8_lossy(&store.data().stdout).into_owned();
-
-    Ok(output)
+fn js_error<E: ToString>(error: E) -> JsValue {
+    JsValue::from_str(&error.to_string())
 }

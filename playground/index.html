@@ -18,6 +18,14 @@
           <button id="compile">WATを生成</button>
           <button id="run" class="primary">Wasmを実行</button>
         </div>
+        <div class="panel__controls panel__controls--stepping">
+          <span class="panel__controls-label">ステップ実行</span>
+          <div class="panel__controls-group">
+            <button id="step-start">開始 / 再開</button>
+            <button id="step-pause">一時停止</button>
+            <button id="step-stop" class="danger">停止</button>
+          </div>
+        </div>
         <div id="status" class="status" role="status" aria-live="polite"></div>
       </section>
       <section class="panel">
