@@ -101,6 +101,79 @@ fn run_wasm(wat_code: &str) -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
+    // WASIのfd_readをホスト側で実装する (stdin)
+    linker.func_wrap(
+        "wasi_snapshot_preview1",
+        "fd_read",
+        |mut caller: Caller<'_, ()>,
+            fd: i32,
+            iovecs_ptr: i32,
+            iovecs_len: i32,
+            nread_ptr: i32| -> Result<i32, Trap> {
+            use std::io::Read;
+
+            if fd != 0 {
+                // Not stdin
+                const ERRNO_BADF: i32 = 8;
+                return Ok(ERRNO_BADF);
+            }
+
+            let memory = caller
+                .get_export("memory")
+                .and_then(|ext| ext.into_memory())
+                .ok_or_else(|| Trap::new("failed to find memory export"))?;
+
+            let mut read_bytes: u32 = 0;
+            let iovecs_ptr = iovecs_ptr as u32;
+
+            let stdin = std::io::stdin();
+            let mut handle = stdin.lock();
+
+            for i in 0..iovecs_len {
+                let iovec_offset = (iovecs_ptr + (i as u32) * 8) as usize;
+                let mut buf_ptr_bytes = [0u8; 4];
+                memory
+                    .read(&caller, iovec_offset, &mut buf_ptr_bytes)
+                    .map_err(|_| Trap::new("pointer out of bounds"))?;
+                let buf_ptr = u32::from_le_bytes(buf_ptr_bytes);
+
+                let mut buf_len_bytes = [0u8; 4];
+                memory
+                    .read(&caller, iovec_offset + 4, &mut buf_len_bytes)
+                    .map_err(|_| Trap::new("pointer out of bounds"))?;
+                let buf_len = u32::from_le_bytes(buf_len_bytes);
+
+                let mut buffer = vec![0u8; buf_len as usize];
+                let n = handle
+                    .read(&mut buffer)
+                    .map_err(|_| Trap::new("failed to read from stdin"))?;
+
+                let buffer = &buffer[..n];
+                memory
+                    .write(&mut caller, buf_ptr as usize, buffer)
+                    .map_err(|_| Trap::new("buffer out of bounds"))?;
+
+                read_bytes += n as u32;
+
+                if n == 0 {
+                    // EOF reached
+                    break;
+                }
+            }
+
+            memory
+                .write(
+                    &mut caller,
+                    nread_ptr as usize,
+                    &read_bytes.to_le_bytes(),
+                )
+                .map_err(|_| Trap::new("pointer out of bounds"))?;
+
+            const ERRNO_SUCCESS: i32 = 0;
+            Ok(ERRNO_SUCCESS)
+        },
+    )?;
+
     let wasm_binary = wat::parse_str(wat_code)?;
     let module = Module::new(&engine, &*wasm_binary)?;
 
