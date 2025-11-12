@@ -328,3 +328,135 @@
     local.get $vec
     i32.load offset=4
   )
+
+  ;; Reads a line from stdin, returns a new string.
+  ;; Note: This is a simplified implementation. It reads a chunk of data,
+  ;; trims trailing newline characters, and returns it as a string.
+  (func $__read_line (result i32)
+    (local $buf_ptr i32)
+    (local $buf_len i32)
+    (local $iovec_ptr i32)
+    (local $nread_ptr i32)
+    (local $nread i32)
+    (local $new_data_ptr i32)
+    (local $new_header_ptr i32)
+    (local $new_len i32)
+
+    ;; 1. Allocate a temporary buffer for reading
+    i32.const 256
+    local.set $buf_len
+    local.get $buf_len
+    call $__alloc
+    local.set $buf_ptr
+
+    ;; 2. Prepare iovec and nread pointers (using low memory addresses)
+    i32.const 0
+    local.set $iovec_ptr
+    i32.const 8
+    local.set $nread_ptr
+
+    ;; Setup iovec[0]
+    local.get $iovec_ptr
+    local.get $buf_ptr
+    i32.store offset=0 ;; iovec[0].buf
+    local.get $iovec_ptr
+    local.get $buf_len
+    i32.store offset=4 ;; iovec[0].buf_len
+
+    ;; 3. Call fd_read for stdin (fd=0)
+    i32.const 0 ;; fd
+    local.get $iovec_ptr
+    i32.const 1 ;; iovecs_len
+    local.get $nread_ptr
+    call $fd_read
+    drop ;; drop errno
+
+    ;; 4. Get the number of bytes read
+    local.get $nread_ptr
+    i32.load
+    local.set $nread
+
+    ;; Trim trailing newline characters (\n or \r\n)
+    ;; Loop structure:
+    ;;  - If nread <= 0, break
+    ;;  - Load last byte; if it's '\n' or '\r' decrement nread and continue loop
+    ;;  - Otherwise break
+    (block $trim_done
+      (loop $trim_loop
+        ;; if nread <= 0 then break
+        local.get $nread
+        i32.const 0
+        i32.le_s
+        br_if $trim_done
+
+        ;; load last byte: buf_ptr + (nread - 1)
+        local.get $buf_ptr
+        local.get $nread
+        i32.const 1
+        i32.sub
+        i32.add
+        i32.load8_u
+        local.set $new_len ;; use $new_len as a temporary holder for the byte
+
+        ;; if byte == '\n' then decrement nread and continue
+        local.get $new_len
+        i32.const 10 ;; '\n'
+        i32.eq
+        if
+          local.get $nread
+          i32.const 1
+          i32.sub
+          local.set $nread
+          br $trim_loop
+        end
+
+        ;; if byte == '\r' then decrement nread and continue
+        local.get $new_len
+        i32.const 13 ;; '\r'
+        i32.eq
+        if
+          local.get $nread
+          i32.const 1
+          i32.sub
+          local.set $nread
+          br $trim_loop
+        end
+
+        ;; otherwise break out of trimming loop
+        br $trim_done
+      )
+    )
+    local.get $nread
+    local.set $new_len
+
+    ;; 5. Create the final string
+    ;; Allocate memory for the string data
+    local.get $new_len
+    call $__alloc
+    local.set $new_data_ptr
+
+    ;; Copy data from the temp buffer
+    local.get $new_data_ptr
+    local.get $buf_ptr
+    local.get $new_len
+    memory.copy
+
+    ;; Allocate memory for the string header
+    i32.const 12
+    call $__alloc
+    local.set $new_header_ptr
+
+    ;; Fill the header
+    local.get $new_header_ptr
+    local.get $new_data_ptr
+    i32.store offset=0 ;; ptr
+    local.get $new_header_ptr
+    local.get $new_len
+    i32.store offset=4 ;; len
+    local.get $new_header_ptr
+    local.get $new_len ;; cap = len
+    i32.store offset=8 ;; cap
+
+    ;; Return the header pointer
+    local.get $new_header_ptr
+  )

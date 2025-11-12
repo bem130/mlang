@@ -179,6 +179,10 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
                     generator.wat_buffer.push_str("    call $__vec_len_i32\n");
                     return Ok(());
                 }
+                "read_line" => {
+                    generator.wat_buffer.push_str("    call $__read_line\n");
+                    return Ok(());
+                }
                 "print" => {
                     generate_expr(generator, &args[0])?;
                     generate_print_logic(generator);

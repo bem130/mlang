@@ -1,0 +1,8 @@
+{
+  "expect": "ok",
+  "stdin": "Wasmer\n",
+  "stdout": [
+    "Please enter your name:",
+    "Hello, Wasmer!"
+  ]
+}

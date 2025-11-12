@@ -38,6 +38,8 @@ enum SampleMetadata {
         #[allow(dead_code)]
         functions: Vec<FunctionMetadata>,
         #[serde(default)]
+        stdin: String,
+        #[serde(default)]
         stdout: Vec<String>,
     },
     Error {
@@ -57,13 +59,14 @@ struct SampleCase {
 
 struct TestWasiCtx {
     stdout: Vec<u8>,
+    stdin: std::io::Cursor<Vec<u8>>,
 }
 
 #[test]
-fn passing_samples_emit_expected_stdout() {
+fn passing_samples_work_as_expected() {
     for sample in load_samples("passing") {
-        let expected_stdout = match &sample.metadata {
-            SampleMetadata::Ok { stdout, .. } => stdout.clone(),
+        let (expected_stdout, stdin_data) = match &sample.metadata {
+            SampleMetadata::Ok { stdout, stdin, .. } => (stdout.clone(), stdin.clone()),
             SampleMetadata::Error { .. } => panic!(
                 "sample {} is marked as error metadata but located in passing directory",
                 sample.name
@@ -85,7 +88,7 @@ fn passing_samples_emit_expected_stdout() {
             .generate(&typed_ast)
             .unwrap_or_else(|err| panic!("failed to generate WAT for {}: {}", sample.name, err));
 
-        let stdout = run_wasm_and_capture_stdout(&wat)
+        let stdout = run_wasm(&wat, stdin_data.as_bytes())
             .unwrap_or_else(|err| panic!("failed to execute {}: {}", sample.name, err));
 
         let actual_lines: Vec<String> = stdout.lines().map(|line| line.to_string()).collect();
@@ -98,9 +101,15 @@ fn passing_samples_emit_expected_stdout() {
     }
 }
 
-fn run_wasm_and_capture_stdout(wat: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn run_wasm(wat: &str, stdin: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
     let engine = Engine::default();
-    let mut store = Store::new(&engine, TestWasiCtx { stdout: Vec::new() });
+    let mut store = Store::new(
+        &engine,
+        TestWasiCtx {
+            stdout: Vec::new(),
+            stdin: std::io::Cursor::new(stdin.to_vec()),
+        },
+    );
     let mut linker = Linker::new(&engine);
 
     linker.func_wrap(
@@ -153,6 +162,73 @@ fn run_wasm_and_capture_stdout(wat: &str) -> Result<String, Box<dyn std::error::
                     &mut caller,
                     nwritten_ptr as usize,
                     &written_bytes.to_le_bytes(),
+                )
+                .map_err(|_| Trap::new("pointer out of bounds"))?;
+
+            const ERRNO_SUCCESS: i32 = 0;
+            Ok(ERRNO_SUCCESS)
+        },
+    )?;
+
+    linker.func_wrap(
+        "wasi_snapshot_preview1",
+        "fd_read",
+        |mut caller: Caller<'_, TestWasiCtx>,
+         fd: i32,
+         iovecs_ptr: i32,
+         iovecs_len: i32,
+         nread_ptr: i32|
+         -> Result<i32, Trap> {
+            use std::io::Read;
+
+            if fd != 0 {
+                // Not stdin
+                const ERRNO_BADF: i32 = 8;
+                return Ok(ERRNO_BADF);
+            }
+
+            let memory = caller
+                .get_export("memory")
+                .and_then(|ext| ext.into_memory())
+                .ok_or_else(|| Trap::new("failed to find memory export"))?;
+
+            let mut read_bytes: u32 = 0;
+            let iovecs_ptr = iovecs_ptr as u32;
+
+            for i in 0..iovecs_len {
+                let iovec_offset = (iovecs_ptr + (i as u32) * 8) as usize;
+                let mut buf_ptr_bytes = [0u8; 4];
+                memory
+                    .read(&caller, iovec_offset, &mut buf_ptr_bytes)
+                    .map_err(|_| Trap::new("pointer out of bounds"))?;
+                let buf_ptr = u32::from_le_bytes(buf_ptr_bytes);
+
+                let mut buf_len_bytes = [0u8; 4];
+                memory
+                    .read(&caller, iovec_offset + 4, &mut buf_len_bytes)
+                    .map_err(|_| Trap::new("pointer out of bounds"))?;
+                let buf_len = u32::from_le_bytes(buf_len_bytes);
+
+                let mut buffer = vec![0u8; buf_len as usize];
+                let n = caller
+                    .data_mut()
+                    .stdin
+                    .read(&mut buffer)
+                    .map_err(|_| Trap::new("failed to read from stdin"))?;
+
+                let buffer = &buffer[..n];
+                memory
+                    .write(&mut caller, buf_ptr as usize, buffer)
+                    .map_err(|_| Trap::new("buffer out of bounds"))?;
+
+                read_bytes += n as u32;
+            }
+
+            memory
+                .write(
+                    &mut caller,
+                    nread_ptr as usize,
+                    &read_bytes.to_le_bytes(),
                 )
                 .map_err(|_| Trap::new("pointer out of bounds"))?;
 
@@ -250,7 +326,7 @@ fn main() {
         .generate(&typed_ast)
         .expect("code generation should succeed");
 
-    let stdout = run_wasm_and_capture_stdout(&wat).expect("executing Wasm module should succeed");
+    let stdout = run_wasm(&wat, b"").expect("executing Wasm module should succeed");
 
     assert_eq!(stdout.trim(), "6");
 }

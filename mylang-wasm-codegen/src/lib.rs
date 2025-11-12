@@ -48,6 +48,7 @@ impl WasmGenerator {
         self.wat_buffer.clear();
         self.wat_buffer.push_str("(module\n");
         self.wat_buffer.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
+        self.wat_buffer.push_str("  (import \"wasi_snapshot_preview1\" \"fd_read\" (func $fd_read (param i32 i32 i32 i32) (result i32)))\n");
         self.wat_buffer
             .push_str("  (memory (export \"memory\") 1)\n");
         self.wat_buffer.push_str(&format!(

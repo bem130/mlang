@@ -110,6 +110,14 @@ impl Analyzer {
             },
         );
         function_table.insert(
+            "read_line".to_string(),
+            FunctionSignature {
+                param_types: alloc::vec![],
+                return_type: DataType::String,
+                definition_span: Span::default(),
+            },
+        );
+        function_table.insert(
             "string_char_at".to_string(),
             FunctionSignature {
                 param_types: alloc::vec![DataType::String, DataType::I32],
