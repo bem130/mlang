@@ -1,7 +1,5 @@
 // エッジケース: 無限集合型に対する非網羅的なmatch式はコンパイルエラーになる
 
-fn classify_score(score: i32) -> i32 {
-    match score {
-        0 => 0,
-    }
-}
+fn classify_score |score: i32| match score {
+    0 => 0,
+} : (i32) -> i32;

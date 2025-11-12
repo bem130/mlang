@@ -1,0 +1,5 @@
+println("Please enter your name:");
+let name read_line();
+let greeting string_concat("Hello, ", name);
+let final_greeting string_concat(greeting, "!");
+println(final_greeting);

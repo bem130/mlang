@@ -1,4 +1,2 @@
-fn main() {
-    let mut flag = true;
-    flag = 1;
-}
+let mut flag true;
+set flag 1;

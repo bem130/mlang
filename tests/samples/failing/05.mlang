@@ -1,7 +1,3 @@
-fn returns_string_but_declares_i32() -> i32 {
-    "this should cause a type error"
-}
+fn returns_string_but_declares_i32 || "this should cause a type error" : () -> i32;
 
-fn main() {
-    // 何もしなくても、関数の定義自体がエラーになるはず
-}
+// 何もしなくても、関数の定義自体がエラーになるはず

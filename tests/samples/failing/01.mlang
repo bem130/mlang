@@ -1,7 +1,5 @@
-fn main() {
-    let result = if true {
-        123 // i32型
-    } else {
-        "a string" // string型
-    };
-}
+let result if true {
+    123 // i32型
+} else {
+    "a string" // string型
+};

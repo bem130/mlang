@@ -1,4 +1,2 @@
-fn main() {
-    let value = 1;
-    value = 2;
-}
+let value 1;
+set value 2;

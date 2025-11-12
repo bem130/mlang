@@ -1,6 +1,4 @@
 // Condition must be boolean.
-fn main() {
-    while 1 {
-        println("bad loop");
-    }
+while 1 {
+    println("bad loop");
 }

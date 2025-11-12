@@ -1,0 +1,10 @@
+{
+  "expect": "ok",
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "unit"
+    }
+  ]
+}
