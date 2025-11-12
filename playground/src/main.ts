@@ -21,6 +21,7 @@ const stepStartButton = document.getElementById("step-start") as HTMLButtonEleme
 const stepPauseButton = document.getElementById("step-pause") as HTMLButtonElement;
 const stepStopButton = document.getElementById("step-stop") as HTMLButtonElement;
 const statusElement = document.getElementById("status") as HTMLDivElement;
+const docsLink = document.getElementById("docs-link") as HTMLAnchorElement | null;
 
 let stepRunner: StepRunner | null = null;
 let stepIntervalId: number | null = null;
@@ -36,6 +37,15 @@ fn main() {
 
 if (sourceInput.value.trim().length === 0) {
   sourceInput.value = DEFAULT_SOURCE;
+}
+
+if (docsLink) {
+  const configuredDocsUrl = import.meta.env.VITE_DOCUMENTATION_URL;
+  const fallbackUrl = docsLink.dataset.docsUrl
+    ? new URL(docsLink.dataset.docsUrl, window.location.href).toString()
+    : new URL("../doc/", window.location.href).toString();
+  docsLink.href = configuredDocsUrl?.trim() ? configuredDocsUrl : fallbackUrl;
+  docsLink.rel = "noopener noreferrer";
 }
 
 function setStatus(message: string, isError = false): void {

@@ -1,0 +1,4 @@
+title: mlang
+description: Documentation for the mlang programming language and tooling.
+theme: jekyll-theme-cayman
+markdown: kramdown
