@@ -2,6 +2,13 @@
   "expect": "ok",
   "functions": [
     {
+      "name": "add_one",
+      "params": [
+        "i32"
+      ],
+      "return_type": "i32"
+    },
+    {
       "name": "main",
       "params": [],
       "return_type": "unit"
