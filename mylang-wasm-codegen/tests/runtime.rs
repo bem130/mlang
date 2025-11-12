@@ -3,7 +3,7 @@ use mylang_wasm_codegen::WasmGenerator;
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use wasmi::{core::Trap, Caller, Engine, Linker, Module, Store};
+use wasmi::{Caller, Engine, Linker, Module, Store, core::Trap};
 
 #[derive(Debug, Deserialize)]
 struct FunctionMetadata {
@@ -88,14 +88,10 @@ fn passing_samples_emit_expected_stdout() {
         let stdout = run_wasm_and_capture_stdout(&wat)
             .unwrap_or_else(|err| panic!("failed to execute {}: {}", sample.name, err));
 
-        let actual_lines: Vec<String> = stdout
-            .lines()
-            .map(|line| line.to_string())
-            .collect();
+        let actual_lines: Vec<String> = stdout.lines().map(|line| line.to_string()).collect();
 
         assert_eq!(
-            actual_lines,
-            expected_stdout,
+            actual_lines, expected_stdout,
             "stdout mismatch for sample {}",
             sample.name
         );

@@ -2,8 +2,8 @@ use mylang_core::analyze_source;
 use mylang_wasm_codegen::WasmGenerator;
 use wasm_bindgen::prelude::*;
 use wasmi::{
-    core::{Trap, TrapCode},
     Caller, Config, Engine, Instance, Linker, Module, Store, TypedFunc,
+    core::{Trap, TrapCode},
 };
 
 struct HostState {
@@ -90,8 +90,7 @@ impl StepRunner {
             return Ok(StepStatus::Completed);
         }
 
-        self
-            .store
+        self.store
             .add_fuel(fuel)
             .map_err(|error| js_error(error.to_string()))?;
 

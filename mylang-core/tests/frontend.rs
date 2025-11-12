@@ -116,16 +116,24 @@ fn passing_samples_match_metadata() {
                     panic!("expected Ok for {}, got Err: {}", sample.name, err)
                 });
 
+                let function_nodes: Vec<_> = analysis
+                    .typed_ast
+                    .iter()
+                    .filter_map(|node| match node {
+                        TypedAstNode::FnDef { .. } => Some(node),
+                        _ => None,
+                    })
+                    .collect();
+
                 assert_eq!(
-                    analysis.typed_ast.len(),
+                    function_nodes.len(),
                     functions.len(),
-                    "typed AST count mismatch for {}",
+                    "typed AST function count mismatch for {}",
                     sample.name
                 );
 
                 for func_meta in &functions {
-                    let typed_node = analysis
-                        .typed_ast
+                    let typed_node = function_nodes
                         .iter()
                         .find_map(|node| match node {
                             TypedAstNode::FnDef {
@@ -143,7 +151,7 @@ fn passing_samples_match_metadata() {
                             )
                         });
 
-                    let param_types: Vec<&str> = typed_node
+                    let param_types: Vec<String> = typed_node
                         .0
                         .iter()
                         .map(|(_, ty)| data_type_to_str(ty))
@@ -250,7 +258,7 @@ fn assert_function_signature_matches(
     metadata: &FunctionMetadata,
     sample_name: &str,
 ) {
-    let param_types: Vec<&str> = signature.param_types.iter().map(data_type_to_str).collect();
+    let param_types: Vec<String> = signature.param_types.iter().map(data_type_to_str).collect();
     assert_eq!(
         param_types, metadata.params,
         "function_table parameter mismatch for function '{}' in {}",
@@ -266,12 +274,21 @@ fn assert_function_signature_matches(
     );
 }
 
-fn data_type_to_str(data_type: &DataType) -> &'static str {
+fn data_type_to_str(data_type: &DataType) -> String {
     match data_type {
-        DataType::I32 => "i32",
-        DataType::F64 => "f64",
-        DataType::Bool => "bool",
-        DataType::String => "string",
-        DataType::Unit => "unit",
+        DataType::I32 => "i32".to_string(),
+        DataType::F64 => "f64".to_string(),
+        DataType::Bool => "bool".to_string(),
+        DataType::String => "string".to_string(),
+        DataType::Unit => "unit".to_string(),
+        DataType::Tuple(elements) => {
+            let inner = elements
+                .iter()
+                .map(data_type_to_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({})", inner)
+        }
+        DataType::Struct(name) | DataType::Enum(name) => name.clone(),
     }
 }
