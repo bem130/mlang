@@ -6,16 +6,15 @@
 // --- ヘルパー関数: nがdivisorの倍数かどうかを判定 ---
 // mylangには剰余演算子(%)がないため、整数の割り算と掛け算を使って
 // `n - (n / divisor) * divisor == 0` という計算で代用します。
-fn is_multiple_of |n, divisor|
+fn is_multiple_of |n: i32, divisor: i32|->bool
     // 数式ブロック内で判定式を評価します。
-    $n - (n / divisor) * divisor == 0$
-: (i32, i32) -> bool;
+    $n - (n / divisor) * divisor == 0$;
 
 // --- メインロジック: 再帰による総和計算 ---
 // limit: 上限値 (この値は含まない)
 // current: 現在調べている数値
 // total_sum: これまでに見つかった倍数の合計
-fn calculate_sum_recursive |limit, current, total_sum|
+fn calculate_sum_recursive |limit: i32, current: i32, total_sum: i32|->i32
     // ベースケース: 現在の数値が上限に達したら、計算を終了し合計値を返す
     if $current >= limit$ {
         total_sum
@@ -37,8 +36,7 @@ fn calculate_sum_recursive |limit, current, total_sum|
         
         // 次の数値で再帰呼び出し
         calculate_sum_recursive(limit, $current + 1$, new_sum)
-    }
-: (i32, i32, i32) -> i32;
+    };
 
 // --- プログラムの暗黙的なエントリーポイント ---
 println("--- Problem: Sum of multiples of 3 or 5 below 1000 ---");
@@ -50,6 +48,6 @@ let result calculate_sum_recursive(limit, 1, 0);
 
 // 結果の出力
 let msg1 string_concat("The sum of all the multiples of 3 or 5 below ", i32_to_string(limit));
-let msg2 string_concat(msg1, " is: ");
+let msg2 string_concat(msg1, ", is: ");
 println(string_concat(msg2, i32_to_string(result)));
 // 期待される結果: 233168

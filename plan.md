@@ -22,25 +22,23 @@
 ### 2. 関数定義 (`let hoist` + ラムダ式)
 
 *   **仕様**:
-    *   関数は `|引数1, 引数2| 式` という記法を持つ**式（関数リテラル）**として定義する。
+    *   関数は `|引数1: 型1, 引数2: 型2|->戻り値型 式` という記法を持つ**式（関数リテラル）**として定義する。
     *   関数定義は、他の値と同様に `let`, `let mut`, `let hoist` を使って変数に束縛する。
     *   自己再帰・相互再帰する関数は `let hoist` を用いて定義する。
-    *   `|引数| 式` はそれ自体が完結した一つの式であるため、型注釈 `: (引数型...) -> 戻り値型` を直後に記述できる。
+    *   `|引数:型|->型 式` はそれ自体が完結した一つの式であるため、型注釈 `: (引数型...) -> 戻り値型` を直後に記述できる。優先度の関係から、()で囲う必要がある。`(|引数:型|->型 式): (引数型...) -> 戻り値型`
 
 *   **サンプルコード**:
 
     ```mylang
     // 通常の関数
-    let add |a, b| $a + b$ : (i32, i32) -> i32;
+    let add |a: i32, b: i32|->i32 $a + b$;
 
     // 自己再帰する関数 (巻き上げが必要)
-    let hoist factorial |n| 
-        if $n <= 1$ { 1 } else { $n * factorial($n - 1$) }
-    : (i32) -> i32;
+    let hoist factorial |n: i32|->i32 if $n <= 1$ { 1 } else { $n * factorial($n - 1$) };
 
     // 相互再帰する関数 (let hoistを並べる)
-    let hoist is_even |n| if $n==0$ {true} else {is_odd($n-1$)} : (i32)->bool;
-    let hoist is_odd  |n| if $n==0$ {false} else {is_even($n-1$)} : (i32)->bool;
+    let hoist is_even |n: i32|->bool if $n==0$ {true} else {is_odd($n-1$)};
+    let hoist is_odd  |n: i32|->bool if $n==0$ {false} else {is_even($n-1$)};
     ```
 
 #### 注
@@ -57,16 +55,14 @@
 
     ```mylang
     // 通常の関数
-    fn add |a, b| $a + b$ : (i32, i32) -> i32;
+    fn add |a: i32, b: i32|->i32 $a + b$;
 
-    // 自己再帰する関数
-    fn factorial |n| 
-        if $n <= 1$ { 1 } else { $n * factorial($n - 1$) }
-    : (i32) -> i32;
+    // 自己再帰する関数 (巻き上げが必要)
+    fn factorial |n: i32|->i32 if $n <= 1$ { 1 } else { $n * factorial($n - 1$) };
 
-    // 相互再帰する関数
-    fn is_even |n| if $n==0$ {true} else {is_odd($n-1$)} : (i32)->bool;
-    fn is_odd  |n| if $n==0$ {false} else {is_even($n-1$)} : (i32)->bool;
+    // 相互再帰する関数 (let hoistを並べる)
+    fn is_even |n: i32|->bool if $n==0$ {true} else {is_odd($n-1$)};
+    fn is_odd  |n: i32|->bool if $n==0$ {false} else {is_even($n-1$)};
     ```
 
 ### 4. コンパイルモードと暗黙の `main` 関数

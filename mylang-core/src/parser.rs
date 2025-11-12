@@ -39,119 +39,22 @@ impl Parser {
         Ok(nodes)
     }
 
-    /// 関数定義 `fn name(p1: t1, ...) -> type { ... }` または `fn name |p1, p2| expr : type` をパースする
-    /// 後者は `let hoist` に脱糖される（新構文）。前者は従来のFnDef（後方互換）。
+    /// `fn name |p: t|->r body` を `let hoist name |p: t|->r body` に脱糖する
     fn parse_fn_def(&mut self) -> Result<RawAstNode, LangError> {
         let start_span = self.consume(Token::Fn)?.1;
+        let (name, name_span) = self.consume_identifier()?;
 
-        let name_token = self.consume_identifier()?;
-        let name = (name_token.0.clone(), name_token.1);
+        // fn は let hoist のシンタックスシュガーとして扱う
+        // |...|->... body というラムダ式を期待する
+        let value = self.parse_lambda_as_node()?;
+        let end_span = value.span();
 
-        // 新構文: fn name |params| body : type を let hoist に脱糖する
-        // | または || で始まるかをチェック
-        if self.peek() == Some(&Token::Pipe) || self.peek() == Some(&Token::OrOr) {
-            let mut lambda_params = Vec::new();
+        // 式の後のセミコロンを消費
+        self.check_and_consume(Token::Semicolon);
 
-            // || の場合は空引数リストとして確定
-            if self.check_and_consume(Token::OrOr) {
-                // `||` を消費したのでパラメータパースはスキップ
-            } else {
-                // `|` の場合
-                self.consume(Token::Pipe)?; // consume first |
-
-                // パラメータをパース (lambda形式)
-                if self.peek() != Some(&Token::Pipe) {
-                    loop {
-                        let (param_name, param_span) = self.consume_identifier()?;
-                        let param_type = if self.check_and_consume(Token::Colon) {
-                            Some(self.parse_type()?)
-                        } else {
-                            None
-                        };
-                        lambda_params.push(((param_name, param_span), param_type));
-
-                        if !self.check_and_consume(Token::Comma) {
-                            break;
-                        }
-                    }
-                }
-                self.consume(Token::Pipe)?; // consume closing |
-            }
-
-            // ラムダボディをパース
-            let body = self.parse_sexpression()?;
-
-            // 型注釈をパース (オプショナル)
-            let return_type = if self.check_and_consume(Token::Colon) {
-                let type_token = self.parse_type()?;
-                Some((type_token.0.clone(), type_token.1))
-            } else {
-                None
-            };
-
-            let end_span = body.span();
-
-            // ラムダ式をRawExprPartとして構築
-            let lambda_expr = RawExprPart::Lambda {
-                params: lambda_params,
-                body: Box::new(body),
-                return_type,
-                span: combine_spans(start_span, end_span),
-            };
-
-            // let hoist に脱糖: let hoist name <lambda> : type
-            // セミコロンをオプショナルで消費（新構文では式の後に ; が来る可能性）
-            self.check_and_consume(Token::Semicolon);
-
-            return Ok(RawAstNode::LetHoist {
-                name: name,
-                value: Box::new(RawAstNode::Expr(vec![lambda_expr])),
-                span: combine_spans(start_span, end_span),
-            });
-        }
-
-        // 旧構文: fn name(p1: t1, ...) -> type { ... }
-        // 【修正点】関数定義の `(` は LParen と CallLParen の両方を許容する
-        if self.peek() == Some(&Token::LParen) {
-            self.consume(Token::LParen)?;
-        } else {
-            self.consume(Token::CallLParen)?;
-        }
-
-        // パラメータのパース
-        let mut params = Vec::new();
-        if self.peek() != Some(&Token::RParen) {
-            loop {
-                let (param_name, param_span) = self.consume_identifier()?;
-                self.consume(Token::Colon)?;
-                let (type_name, type_span) = self.parse_type()?;
-                params.push(((param_name, param_span), (type_name, type_span)));
-
-                if !self.check_and_consume(Token::Comma) {
-                    break;
-                }
-            }
-        }
-
-        self.consume(Token::RParen)?;
-
-        // 戻り値の型 (オプショナル)
-        let return_type = if self.check_and_consume(Token::Arrow) {
-            let type_token = self.parse_type()?;
-            Some((type_token.0.clone(), type_token.1))
-        } else {
-            None
-        };
-
-        let body = self.parse_block()?;
-        let end_span = body.span();
-
-        // 旧構文で返す
-        Ok(RawAstNode::FnDef {
-            name,
-            params,
-            return_type,
-            body: Box::new(body),
+        Ok(RawAstNode::LetHoist {
+            name: (name, name_span),
+            value: Box::new(value),
             span: combine_spans(start_span, end_span),
         })
     }
@@ -460,6 +363,11 @@ impl Parser {
 
     /// S式（S-expression）をパースする
     fn parse_sexpression(&mut self) -> Result<RawAstNode, LangError> {
+        // 式の先頭がブロックなら、ブロック式としてパースする
+        if self.peek() == Some(&Token::LBrace) {
+            return self.parse_block();
+        }
+
         let mut parts = Vec::new();
         // 式の終わりは、文脈を区切るトークン
         while !self.is_at_end() {
@@ -519,7 +427,7 @@ impl Parser {
             Token::LParen => self.parse_s_expr_group(),
             Token::Colon => self.parse_type_annotation(),
             Token::If => self.parse_if_as_part(),
-            Token::Pipe => self.parse_lambda_expression(),
+            Token::Pipe | Token::OrOr => self.parse_lambda_expression(),
             Token::Match => self.parse_match_as_part(),
             _ => Err(ParseError::new(
                 format!("Unexpected token in expression: {:?}", token),
@@ -565,45 +473,67 @@ impl Parser {
         })
     }
 
-    /// ラムダ式 `|arg1, arg2| body : (type) -> type` をパースする
-    fn parse_lambda_expression(&mut self) -> Result<RawExprPart, LangError> {
-        let start_span = self.consume(Token::Pipe)?.1;
+    /// ラムダ式 `|arg1: type, ...|->return_type body` をパースする
+    fn parse_lambda_as_node(&mut self) -> Result<RawAstNode, LangError> {
+        let start_span = self.peek_span();
 
-        // パラメータをパース (lambda形式)
         let mut params = Vec::new();
-        if self.peek() != Some(&Token::Pipe) {
-            loop {
-                let (param_name, param_span) = self.consume_identifier()?;
-                let param_type = if self.check_and_consume(Token::Colon) {
-                    Some(self.parse_type()?)
-                } else {
-                    None
-                };
-                params.push(((param_name, param_span), param_type));
-                if !self.check_and_consume(Token::Comma) {
-                    break;
+        if self.check_and_consume(Token::OrOr) {
+            // Shorthand for empty params: ||
+        } else {
+            // Standard params: |p1: T1, ...|
+            self.consume(Token::Pipe)?;
+            if self.peek() != Some(&Token::Pipe) {
+                loop {
+                    let (param_name, param_span) = self.consume_identifier()?;
+                    self.consume(Token::Colon)?;
+                    let (type_name, type_span) = self.parse_type()?;
+                    params.push(((param_name, param_span), (type_name, type_span)));
+                    if !self.check_and_consume(Token::Comma) {
+                        break;
+                    }
                 }
             }
+            self.consume(Token::Pipe)?;
         }
-        self.consume(Token::Pipe)?;
 
+        // 戻り値の型は必須
+        self.consume(Token::Arrow)?;
+        let return_type = self.parse_type()?;
+
+        // 本体をパース
         let body = self.parse_sexpression()?;
-
-        let return_type = if self.check_and_consume(Token::Colon) {
-            let type_token = self.parse_type()?;
-            Some((type_token.0.clone(), type_token.1))
-        } else {
-            None
-        };
-
         let end_span = body.span();
 
-        Ok(RawExprPart::Lambda {
+        Ok(RawAstNode::Lambda {
             params,
             body: Box::new(body),
             return_type,
             span: combine_spans(start_span, end_span),
         })
+    }
+
+    /// ラムダ式を`RawExprPart`としてパースする
+    fn parse_lambda_expression(&mut self) -> Result<RawExprPart, LangError> {
+        // ラムダ式の実体をパース
+        let node = self.parse_lambda_as_node()?;
+        if let RawAstNode::Lambda {
+            params,
+            body,
+            return_type,
+            span,
+        } = node
+        {
+            Ok(RawExprPart::Lambda {
+                params,
+                body,
+                return_type,
+                span,
+            })
+        } else {
+            // This should never happen as parse_lambda_as_node always returns a Lambda variant
+            unreachable!();
+        }
     }
 
     /// S式の一部として `if <cond> { ... } else { ... }` をパースする

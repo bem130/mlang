@@ -5,7 +5,7 @@ extern crate alloc;
 use crate::span::Span;
 use crate::token::Token;
 use alloc::boxed::Box;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
@@ -14,14 +14,7 @@ use core::fmt;
 pub enum RawAstNode {
     // 式の構成要素。まだS式呼び出しなのか変数なのか確定していない。
     Expr(Vec<RawExprPart>),
-    // 関数定義
-    FnDef {
-        name: (String, Span),
-        params: Vec<((String, Span), (String, Span))>, // ((param_name, span), (type_name, span))
-        return_type: Option<(String, Span)>,
-        body: Box<RawAstNode>,
-        span: Span,
-    },
+    // 関数定義 (fn ... は let hoist ... に脱糖されるため、FnDefは不要)
     StructDef {
         name: (String, Span),
         fields: Vec<RawStructField>,
@@ -36,13 +29,6 @@ pub enum RawAstNode {
     Let {
         name: (String, Span),
         value: Box<RawAstNode>,
-        span: Span,
-    },
-    // 旧: let束縛互換 (LetDef)
-    LetDef {
-        name: (String, Span),
-        value: Box<RawAstNode>,
-        is_mutable: bool,
         span: Span,
     },
     // let mut束縛（ミュータブル）
@@ -63,17 +49,11 @@ pub enum RawAstNode {
         value: Box<RawAstNode>,
         span: Span,
     },
-    // 旧: 代入互換 (Assignment)
-    Assignment {
-        name: (String, Span),
-        value: Box<RawAstNode>,
-        span: Span,
-    },
-    // ラムダ式 |arg1, arg2| body
+    // ラムダ式 |arg: type, ...|->type body
     Lambda {
-        params: Vec<((String, Span), Option<(String, Span)>)>,
+        params: Vec<((String, Span), (String, Span))>, // ((name, span), (type, span))
         body: Box<RawAstNode>,
-        return_type: Option<(String, Span)>,
+        return_type: (String, Span),
         span: Span,
     },
     // ブロック
@@ -146,7 +126,7 @@ pub enum RawExprPart {
     CStyleArgs(Vec<RawAstNode>, Span),
     /// `$$` で囲まれた数式ブロック。内部ではPrattパーサーにより中置記法が解析される。
     MathBlock(MathAstNode, Span),
-    /// 型注釈 `: i32`。
+    /// 型注釈 `: i32`。(ラムダ式以外での利用)
     TypeAnnotation(String, Span),
     /// if式。S式の一部として扱われる。
     IfExpr {
@@ -162,11 +142,11 @@ pub enum RawExprPart {
         span: Span,
     },
     TupleLiteral(Vec<RawAstNode>, Span),
-    /// ラムダ式 `| arg1, arg2 | body`
+    /// ラムダ式 `|arg: type, ...|->type body`
     Lambda {
-        params: Vec<((String, Span), Option<(String, Span)>)>,
+        params: Vec<((String, Span), (String, Span))>, // ((name, span), (type, span))
         body: Box<RawAstNode>,
-        return_type: Option<(String, Span)>,
+        return_type: (String, Span),
         span: Span,
     },
 }
@@ -372,14 +352,16 @@ impl fmt::Display for DataType {
                 params,
                 return_type,
             } => {
-                write!(f, "(")?;
-                for (i, param) in params.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", param)?;
-                }
-                write!(f, ") -> {}", return_type)
+                write!(
+                    f,
+                    "({}) -> {}",
+                    params
+                        .iter()
+                        .map(|p| p.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    return_type
+                )
             }
         }
     }
@@ -390,15 +372,12 @@ impl RawAstNode {
     pub fn span(&self) -> Span {
         match self {
             RawAstNode::Expr(parts) => parts.first().map_or(Span::default(), |p| p.span()),
-            RawAstNode::FnDef { span, .. } => *span,
             RawAstNode::StructDef { span, .. } => *span,
             RawAstNode::EnumDef { span, .. } => *span,
             RawAstNode::Let { span, .. } => *span,
-            RawAstNode::LetDef { span, .. } => *span,
             RawAstNode::LetMut { span, .. } => *span,
             RawAstNode::LetHoist { span, .. } => *span,
             RawAstNode::Set { span, .. } => *span,
-            RawAstNode::Assignment { span, .. } => *span,
             RawAstNode::Lambda { span, .. } => *span,
             RawAstNode::Block { span, .. } => *span,
             RawAstNode::While { span, .. } => *span,

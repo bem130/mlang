@@ -178,31 +178,26 @@ impl Analyzer {
             }
         }
 
+        // 次に let hoist 束縛（関数定義）を収集する
         for node in ast {
-            match node {
-                RawAstNode::FnDef {
-                    name,
+            if let RawAstNode::LetHoist { name, value, span } = node {
+                if let RawAstNode::Lambda {
                     params,
                     return_type,
-                    span,
                     ..
-                } => {
+                } = &**value
+                {
                     let func_name = &name.0;
                     let param_types = params
                         .iter()
                         .map(|(_, type_info)| self.string_to_type(&type_info.0, type_info.1))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let ret_type = match return_type {
-                        Some(rt) => self.string_to_type(&rt.0, rt.1)?,
-                        None => DataType::Unit,
-                    };
+
+                    let ret_type = self.string_to_type(&return_type.0, return_type.1)?;
+
                     if self.function_table.contains_key(func_name) {
-                        // 組み込み関数は上書きできない
                         return Err(LangError::Compile(CompileError::new(
-                            format!(
-                                "Function '{}' is a built-in function and cannot be redefined",
-                                func_name
-                            ),
+                            format!("Function '{}' is already defined", func_name),
                             name.1,
                         )));
                     }
@@ -215,53 +210,6 @@ impl Analyzer {
                         },
                     );
                 }
-                RawAstNode::LetHoist { name, value, span } => {
-                    // LetHoistのシグネチャを抽出 (新構文: fn name |params| body : type)
-                    // valueはBox<RawAstNode>で、その中にExpr(parts)があり、parts内にLambdaが含まれているはず
-                    if let RawAstNode::Expr(parts) = &**value {
-                        if let Some(RawExprPart::Lambda {
-                            params: lambda_params,
-                            return_type: raw_return_type,
-                            ..
-                        }) = parts.first()
-                        {
-                            let func_name = &name.0;
-                            let mut param_types = Vec::new();
-                            for ((_param_name, _), raw_param_type) in lambda_params {
-                                let param_type = if let Some((type_str, type_span)) = raw_param_type {
-                                    self.string_to_type(type_str, *type_span)?
-                                } else {
-                                    // TODO: 型推論を実装するまでは、型注釈がない場合はi32と仮定する
-                                    DataType::I32
-                                };
-                                param_types.push(param_type);
-                            }
-                            let ret_type = if let Some((type_str, type_span)) = raw_return_type {
-                                self.string_to_type(type_str, *type_span)?
-                            } else {
-                                DataType::Unit
-                            };
-                            if self.function_table.contains_key(func_name) {
-                                return Err(LangError::Compile(CompileError::new(
-                                    format!(
-                                        "Function '{}' is a built-in function and cannot be redefined",
-                                        func_name
-                                    ),
-                                    name.1,
-                                )));
-                            }
-                            self.function_table.insert(
-                                func_name.clone(),
-                                FunctionSignature {
-                                    param_types,
-                                    return_type: ret_type,
-                                    definition_span: *span,
-                                },
-                            );
-                        }
-                    }
-                }
-                _ => {}
             }
         }
         Ok(())
@@ -384,7 +332,72 @@ impl Analyzer {
             .rev()
             .find(|entry| entry.original_name == name)
     }
+
+    /// 型パラメータ文字列を、トップレベルのカンマで分割するヘルパー関数。
+    /// `(i32, (i32) -> i32)` のようなネストした型を正しく扱える。
+    fn split_type_params(&self, s: &str, span: Span) -> Result<Vec<String>, LangError> {
+        if s.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut parts = Vec::new();
+        let mut balance = 0;
+        let mut start = 0;
+        for (i, c) in s.char_indices() {
+            match c {
+                '(' | '<' => balance += 1,
+                ')' | '>' => {
+                    if balance == 0 {
+                        return Err(LangError::Compile(CompileError::new(
+                            "Mismatched parentheses/brackets in type signature",
+                            span,
+                        )));
+                    }
+                    balance -= 1;
+                }
+                ',' if balance == 0 => {
+                    parts.push(s[start..i].trim().to_string());
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        if balance != 0 {
+            return Err(LangError::Compile(CompileError::new(
+                "Mismatched parentheses/brackets in type signature",
+                span,
+            )));
+        }
+        parts.push(s[start..].trim().to_string());
+        Ok(parts)
+    }
+
     pub fn string_to_type(&self, s: &str, span: Span) -> Result<DataType, LangError> {
+        let s = s.trim();
+
+        // Handle function types like `(i32, string) -> bool` or `() -> ()`
+        if s.starts_with('(') && s.contains(" -> ") {
+            if let Some(arrow_idx) = s.rfind(" -> ") {
+                let params_part = s[..arrow_idx].trim();
+                if params_part.starts_with('(') && params_part.ends_with(')') {
+                    let params_inner = &params_part[1..params_part.len() - 1];
+                    let return_type_str = &s[arrow_idx + 4..];
+
+                    let param_strings = self.split_type_params(params_inner, span)?;
+                    let param_types = param_strings
+                        .iter()
+                        .map(|p| self.string_to_type(p, span))
+                        .collect::<Result<Vec<_>, _>>()?;
+
+                    let return_type = self.string_to_type(return_type_str.trim(), span)?;
+
+                    return Ok(DataType::Function {
+                        params: param_types,
+                        return_type: Box::new(return_type),
+                    });
+                }
+            }
+        }
+
         match s {
             "i32" => Ok(DataType::I32),
             "f64" => Ok(DataType::F64),
@@ -407,6 +420,15 @@ impl Analyzer {
                     Ok(DataType::Struct(s.to_string()))
                 } else if self.enum_table.contains_key(s) {
                     Ok(DataType::Enum(s.to_string()))
+                } else if s.starts_with('(') && s.ends_with(')') {
+                    // Handle tuple types like (i32, bool)
+                    let inner = &s[1..s.len() - 1];
+                    let element_strings = self.split_type_params(inner, span)?;
+                    let element_types = element_strings
+                        .iter()
+                        .map(|p| self.string_to_type(p, span))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(DataType::Tuple(element_types))
                 } else {
                     Err(LangError::Compile(CompileError::new(
                         format!("Unknown type '{}'", s),

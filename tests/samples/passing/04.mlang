@@ -3,13 +3,13 @@
 // mylangには剰余演算子(%)がないため、
 // `a - (a / b) * b` という計算で代用するヘルパー関数を定義します。
 // この関数は a % b と同じ結果を返します。
-fn modulo |a, b| $a - (a / b) * b$ : (i32, i32) -> i32;
+fn modulo |a: i32, b: i32|->i32 $a - (a / b) * b$;
 
 // ユークリッドの互除法を再帰的に実装し、2つの整数の最大公約数を求めます。
 // gcd(a, b) = 
 //   - a (if b is 0)
 //   - gcd(b, a % b) (otherwise)
-fn gcd |a, b|
+fn gcd |a: i32, b: i32|->i32
     // ベースケース: bが0になったら、aが最大公約数です。
     if $b == 0$ {
         a
@@ -18,8 +18,7 @@ fn gcd |a, b|
     else {
         let remainder modulo(a, b);
         gcd(b, remainder)
-    }
-: (i32, i32) -> i32;
+    };
 
 // --- プログラムの暗黙的なエントリーポイント ---
 println("--- Algorithm Showcase: Euclidean Algorithm for GCD ---");

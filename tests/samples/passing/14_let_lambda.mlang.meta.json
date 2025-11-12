@@ -6,5 +6,10 @@
       "params": [],
       "return_type": "unit"
     }
+  ],
+  "stdin": "Mylang User\n",
+  "stdout": [
+    "Please enter your name:",
+    "Hello, Mylang User!"
   ]
 }

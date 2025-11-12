@@ -8,8 +8,14 @@
     },
     {
       "name": "factorial",
-      "params": ["i32"],
+      "params": [
+        "i32"
+      ],
       "return_type": "i32"
     }
+  ],
+  "stdout": [
+    "11",
+    "120"
   ]
 }

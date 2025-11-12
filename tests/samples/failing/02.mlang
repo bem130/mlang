@@ -1,3 +1,3 @@
-fn requires_i32 |n: i32| n : (i32) -> i32;
+fn requires_i32 |n: i32|->i32 n;
 
-let result requires_i32("this is not an integer");
+let result requires_i32 "this is not an integer";

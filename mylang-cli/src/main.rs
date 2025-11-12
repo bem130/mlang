@@ -6,7 +6,7 @@ use std::{
     process,
 };
 // wasmi 0.51 に合わせたuse文
-use wasmi::{Caller, Engine, Linker, Module, Store, core::Trap};
+use wasmi::{core::Trap, Caller, Engine, Linker, Module, Store};
 
 /// コマンドライン引数を定義するための構造体
 #[derive(Parser, Debug)]
@@ -28,7 +28,10 @@ struct Cli {
 
     #[arg(long, help = "Run the code if the output format is wasm")]
     run: bool,
-    #[arg(long, help = "Compile as library (do not wrap top-level in an implicit main)")]
+    #[arg(
+        long,
+        help = "Compile as library (do not wrap top-level in an implicit main)"
+    )]
     lib: bool,
 }
 
@@ -108,10 +111,11 @@ fn run_wasm(wat_code: &str) -> Result<(), Box<dyn std::error::Error>> {
         "wasi_snapshot_preview1",
         "fd_read",
         |mut caller: Caller<'_, ()>,
-            fd: i32,
-            iovecs_ptr: i32,
-            iovecs_len: i32,
-            nread_ptr: i32| -> Result<i32, Trap> {
+         fd: i32,
+         iovecs_ptr: i32,
+         iovecs_len: i32,
+         nread_ptr: i32|
+         -> Result<i32, Trap> {
             use std::io::Read;
 
             if fd != 0 {

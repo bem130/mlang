@@ -5,14 +5,14 @@ let first vec_get_i32(numbers, 0);
 let logic $!(true && false) || (first == 42)$;
 
 if logic {
-    println string_concat "First element: " (i32_to_string first);
+    println(string_concat("First element: ", i32_to_string(first)));
 } else {
-    println "Logic failed";
+    println("Logic failed");
 };
 
 let word "mylang";
 let ch string_char_at(word, 2);
-println string_concat "Third char: " ch;
+println(string_concat("Third char: ", ch));
 
 let len vec_len_i32(numbers);
-println string_concat "Length: " (i32_to_string len);
+println(string_concat("Length: ", i32_to_string(len)));

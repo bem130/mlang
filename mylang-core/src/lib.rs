@@ -13,13 +13,13 @@ pub mod token;
 mod lexer;
 mod parser;
 
-use crate::ast::{RawAstNode, RawExprPart, TypedAstNode};
+use crate::ast::{RawAstNode, TypedAstNode};
 use crate::compiler::{Analyzer, FunctionSignature};
 use crate::error::{CompileError, LangError, ParseError};
 use crate::span::{combine_spans, Span};
+use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
-use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -56,14 +56,11 @@ pub fn analyze_source(source: &str, is_library: bool) -> Result<AnalysisResult, 
 
         for node in raw_ast_nodes {
             match &node {
-                RawAstNode::FnDef { name, .. } | RawAstNode::LetHoist { name, .. }
-                    if name.0 == "main" =>
-                {
+                RawAstNode::LetHoist { name, .. } if name.0 == "main" => {
                     has_explicit_main = true;
                     definitions.push(node);
                 }
-                RawAstNode::FnDef { .. }
-                | RawAstNode::LetHoist { .. }
+                RawAstNode::LetHoist { .. }
                 | RawAstNode::StructDef { .. }
                 | RawAstNode::EnumDef { .. } => {
                     definitions.push(node);
@@ -95,15 +92,15 @@ pub fn analyze_source(source: &str, is_library: bool) -> Result<AnalysisResult, 
             let unit_type_span = Span::default(); // Span情報がないのでデフォルトで
             let main_name_span = Span::default();
 
-            // fn main || { ... } : () -> () と同等のASTを構築
+            // fn main | |->() { ... } と同等のASTを構築
             let main_fn = RawAstNode::LetHoist {
                 name: ("main".to_string(), main_name_span),
-                value: Box::new(RawAstNode::Expr(vec![RawExprPart::Lambda {
+                value: Box::new(RawAstNode::Lambda {
                     params: vec![],
                     body: Box::new(main_body_block),
-                    return_type: Some(("()".to_string(), unit_type_span)),
+                    return_type: ("()".to_string(), unit_type_span),
                     span: main_fn_span,
-                }])),
+                }),
                 span: main_fn_span,
             };
             definitions.push(main_fn);
