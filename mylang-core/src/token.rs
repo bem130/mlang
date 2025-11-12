@@ -12,6 +12,9 @@ pub enum Token {
     If,
     Else,
     While,
+    Struct,
+    Enum,
+    Match,
     True,
     False,
 
@@ -22,17 +25,19 @@ pub enum Token {
     StringLiteral(String),
 
     // Symbols
-    LParen,     // ( (S式グループ用)
-    CallLParen, // ( (C-style呼び出し用)
-    RParen,     // )
-    LBrace,     // {
-    RBrace,     // }
-    Dollar,     // $
-    Colon,      // :
-    Comma,      // ,
-    Equals,     // =
-    Arrow,      // ->
-    Semicolon,  // ;
+    LParen,      // ( (S式グループ用)
+    CallLParen,  // ( (C-style呼び出し用)
+    RParen,      // )
+    LBrace,      // {
+    RBrace,      // }
+    Dollar,      // $
+    Colon,       // :
+    DoubleColon, // ::
+    Comma,       // ,
+    Equals,      // =
+    Arrow,       // ->
+    FatArrow,    // =>
+    Semicolon,   // ;
 
     // Operators
     Plus,  // +
@@ -59,6 +64,9 @@ impl Token {
             "if" => Some(Token::If),
             "else" => Some(Token::Else),
             "while" => Some(Token::While),
+            "struct" => Some(Token::Struct),
+            "enum" => Some(Token::Enum),
+            "match" => Some(Token::Match),
             "true" => Some(Token::True),
             "false" => Some(Token::False),
             _ => None,

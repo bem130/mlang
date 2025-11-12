@@ -44,7 +44,9 @@ impl<'a> Lexer<'a> {
     /// 次の1トークンを解析して返す
     fn next_token(&mut self) -> Result<Option<(Token, Span)>, String> {
         let span = self.span();
-        let Some(char) = self.next_char() else { return Ok(None) };
+        let Some(char) = self.next_char() else {
+            return Ok(None);
+        };
 
         match char {
             // 空白や改行はスキップし、識別子フラグをリセットする
@@ -69,14 +71,13 @@ impl<'a> Lexer<'a> {
                 Ok(Some((token, span)))
             }
             // シンボルは識別子フラグをリセットする
-            ')' | '{' | '}' | '$' | ':' | ',' | ';' | '+' | '*' | '/' => {
+            ')' | '{' | '}' | '$' | ',' | ';' | '+' | '*' | '/' => {
                 self.last_char_was_ident_part = false;
                 let token = match char {
                     ')' => Token::RParen,
                     '{' => Token::LBrace,
                     '}' => Token::RBrace,
                     '$' => Token::Dollar,
-                    ':' => Token::Colon,
                     ',' => Token::Comma,
                     ';' => Token::Semicolon,
                     '+' => Token::Plus,
@@ -85,6 +86,15 @@ impl<'a> Lexer<'a> {
                     _ => unreachable!(),
                 };
                 Ok(Some((token, span)))
+            }
+            ':' => {
+                self.last_char_was_ident_part = false;
+                if self.peek() == Some(&':') {
+                    self.next_char();
+                    Ok(Some((Token::DoubleColon, span)))
+                } else {
+                    Ok(Some((Token::Colon, span)))
+                }
             }
 
             // 複数文字の可能性があるシンボル
@@ -105,7 +115,10 @@ impl<'a> Lexer<'a> {
 
             '=' => {
                 self.last_char_was_ident_part = false;
-                if self.peek() == Some(&'=') {
+                if self.peek() == Some(&'>') {
+                    self.next_char();
+                    Ok(Some((Token::FatArrow, span)))
+                } else if self.peek() == Some(&'=') {
                     self.next_char();
                     Ok(Some((Token::EqualsEquals, span)))
                 } else {

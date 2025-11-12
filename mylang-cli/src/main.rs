@@ -6,7 +6,7 @@ use std::{
     process,
 };
 // wasmi 0.51 に合わせたuse文
-use wasmi::{core::Trap, Caller, Engine, Linker, Module, Store};
+use wasmi::{Caller, Engine, Linker, Module, Store, core::Trap};
 
 /// コマンドライン引数を定義するための構造体
 #[derive(Parser, Debug)]
@@ -18,7 +18,12 @@ struct Cli {
     #[arg(short, long)]
     output: String,
 
-    #[arg(long, value_name = "FORMAT", default_value = "wasm", help = "Output format: wasm, llvm")]
+    #[arg(
+        long,
+        value_name = "FORMAT",
+        default_value = "wasm",
+        help = "Output format: wasm, llvm"
+    )]
     emit: String,
 
     #[arg(long, help = "Run the code if the output format is wasm")]
@@ -98,7 +103,7 @@ fn run_wasm(wat_code: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let wasm_binary = wat::parse_str(wat_code)?;
     let module = Module::new(&engine, &*wasm_binary)?;
-    
+
     // モジュールをインスタンス化する
     let instance = linker.instantiate(&mut store, &module)?.start(&mut store)?;
 
@@ -138,8 +143,8 @@ fn try_main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 2. フロントエンドによる解析 ---
     println!("解析中...");
-    let analysis_result = analyze_source(source_code.trim())
-        .map_err(|e| format!("コンパイルエラー: {}", e))?;
+    let analysis_result =
+        analyze_source(source_code.trim()).map_err(|e| format!("コンパイルエラー: {}", e))?;
 
     // --- 3. バックエンドの選択とコード生成 ---
     println!("コード生成中 ({}) ...", cli.emit);
