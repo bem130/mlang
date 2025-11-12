@@ -5,6 +5,7 @@ use super::{Analyzer, VariableEntry};
 use crate::alloc::string::ToString;
 use crate::ast::*;
 use crate::error::{CompileError, LangError};
+use crate::span::Span;
 use crate::token::Token;
 use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
@@ -80,6 +81,46 @@ pub fn analyze_toplevel(
                 params: typed_params,
                 body: typed_body,
                 return_type: original_return_type,
+                span: *span,
+            })
+        }
+        RawAstNode::StructDef { name, span, .. } => {
+            let info = analyzer.struct_table.get(&name.0).cloned().ok_or_else(|| {
+                LangError::Compile(CompileError::new(
+                    format!("Unknown struct '{}'", name.0),
+                    name.1,
+                ))
+            })?;
+            let fields = info
+                .fields
+                .into_iter()
+                .map(|(field_name, field_type)| (field_name, field_type))
+                .collect();
+            Ok(TypedAstNode::StructDef {
+                name: name.0.clone(),
+                fields,
+                span: *span,
+            })
+        }
+        RawAstNode::EnumDef { name, span, .. } => {
+            let info = analyzer.enum_table.get(&name.0).cloned().ok_or_else(|| {
+                LangError::Compile(CompileError::new(
+                    format!("Unknown enum '{}'", name.0),
+                    name.1,
+                ))
+            })?;
+            let variants = info
+                .variants
+                .into_iter()
+                .map(|(variant_name, variant_info)| TypedEnumVariant {
+                    name: variant_name,
+                    field_types: variant_info.field_types,
+                    span: variant_info.span,
+                })
+                .collect();
+            Ok(TypedAstNode::EnumDef {
+                name: name.0.clone(),
+                variants,
                 span: *span,
             })
         }
@@ -265,8 +306,15 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                 span: *span,
             })
         }
+        RawAstNode::Match { value, arms, span } => analyze_match_expr(analyzer, value, arms, *span),
         RawAstNode::FnDef { .. } => {
             unreachable!("Function definitions cannot be nested inside expressions.")
+        }
+        RawAstNode::StructDef { span, .. } | RawAstNode::EnumDef { span, .. } => {
+            Err(LangError::Compile(CompileError::new(
+                "Type definitions cannot appear inside expressions",
+                *span,
+            )))
         }
     }
 }
@@ -528,6 +576,23 @@ fn analyze_sexp_from_slice<'a>(
                 ))),
             }
         }
+        RawExprPart::TupleLiteral(elements, span) => {
+            *parts = &parts[1..];
+            let mut typed_elements = Vec::new();
+            let mut element_types = Vec::new();
+            for element in elements {
+                let typed_element = analyze_expr(analyzer, element)?;
+                element_types.push(typed_element.data_type.clone());
+                typed_elements.push(typed_element);
+            }
+            Ok(TypedExpr {
+                kind: TypedExprKind::TupleLiteral {
+                    elements: typed_elements,
+                },
+                data_type: DataType::Tuple(element_types),
+                span: *span,
+            })
+        }
         RawExprPart::MathBlock(math_node, _) => {
             *parts = &parts[1..];
             analyze_math_node(analyzer, math_node)
@@ -732,6 +797,404 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
                 data_type: signature.return_type.clone(),
                 span: *span,
             })
+        }
+    }
+}
+
+fn analyze_match_expr(
+    analyzer: &mut Analyzer,
+    value: &RawAstNode,
+    arms: &[RawMatchArm],
+    span: Span,
+) -> Result<TypedExpr, LangError> {
+    if arms.is_empty() {
+        return Err(LangError::Compile(CompileError::new(
+            "Match expression must have at least one arm",
+            span,
+        )));
+    }
+
+    let typed_value = analyze_expr(analyzer, value)?;
+    let mut typed_arms = Vec::new();
+    let mut result_type: Option<DataType> = None;
+
+    for arm in arms {
+        analyzer.enter_scope();
+        let mut bound_names = BTreeSet::new();
+        let pattern_result = analyze_pattern(
+            analyzer,
+            &arm.pattern,
+            &typed_value.data_type,
+            &mut bound_names,
+        );
+        let (typed_pattern, bindings) = match pattern_result {
+            Ok(res) => res,
+            Err(err) => {
+                analyzer.leave_scope();
+                return Err(err);
+            }
+        };
+
+        for entry in bindings {
+            analyzer.variable_table.push(entry);
+        }
+
+        let body_result = analyze_expr(analyzer, &arm.body);
+        analyzer.leave_scope();
+        let typed_body = body_result?;
+
+        if let Some(expected_type) = &result_type {
+            if *expected_type != typed_body.data_type {
+                return Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "Match arms must return the same type, but found '{}' and '{}'",
+                        expected_type, typed_body.data_type
+                    ),
+                    typed_body.span,
+                )));
+            }
+        } else {
+            result_type = Some(typed_body.data_type.clone());
+        }
+
+        typed_arms.push(TypedMatchArm {
+            pattern: typed_pattern,
+            body: typed_body,
+        });
+    }
+
+    ensure_match_exhaustive(analyzer, &typed_value.data_type, &typed_arms, span)?;
+
+    Ok(TypedExpr {
+        kind: TypedExprKind::Match {
+            value: Box::new(typed_value),
+            arms: typed_arms,
+        },
+        data_type: result_type.unwrap_or(DataType::Unit),
+        span,
+    })
+}
+
+fn ensure_match_exhaustive(
+    analyzer: &Analyzer,
+    matched_type: &DataType,
+    arms: &[TypedMatchArm],
+    match_span: Span,
+) -> Result<(), LangError> {
+    if arms.iter().any(|arm| pattern_is_catch_all(&arm.pattern)) {
+        return Ok(());
+    }
+
+    match matched_type {
+        DataType::Enum(enum_name) => {
+            let enum_info = analyzer.enum_table.get(enum_name).ok_or_else(|| {
+                LangError::Compile(CompileError::new(
+                    format!("Unknown enum '{}'", enum_name),
+                    match_span,
+                ))
+            })?;
+
+            let mut covered = BTreeSet::new();
+            for arm in arms {
+                if let TypedPattern::EnumVariant { variant_name, .. } = &arm.pattern {
+                    covered.insert(variant_name.clone());
+                }
+            }
+
+            if covered.len() == enum_info.variants.len() {
+                Ok(())
+            } else {
+                let missing: Vec<_> = enum_info
+                    .variants
+                    .keys()
+                    .filter(|name| !covered.contains(*name))
+                    .cloned()
+                    .collect();
+                Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "Non-exhaustive match on enum '{}': missing variants {}",
+                        enum_name,
+                        missing.join(", ")
+                    ),
+                    match_span,
+                )))
+            }
+        }
+        DataType::Bool => {
+            let mut seen_true = false;
+            let mut seen_false = false;
+            for arm in arms {
+                if let TypedPattern::Literal(LiteralValue::Bool(value)) = &arm.pattern {
+                    if *value {
+                        seen_true = true;
+                    } else {
+                        seen_false = true;
+                    }
+                }
+            }
+
+            if seen_true && seen_false {
+                Ok(())
+            } else {
+                let mut missing = Vec::new();
+                if !seen_true {
+                    missing.push("true");
+                }
+                if !seen_false {
+                    missing.push("false");
+                }
+                Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "Non-exhaustive match on 'bool': add an arm for {} or use '_'",
+                        missing.join(" and ")
+                    ),
+                    match_span,
+                )))
+            }
+        }
+        other_type => Err(LangError::Compile(CompileError::new(
+            format!(
+                "Match expression on type '{}' is not exhaustive; add a '_' arm to cover remaining cases",
+                other_type
+            ),
+            match_span,
+        ))),
+    }
+}
+
+fn pattern_is_catch_all(pattern: &TypedPattern) -> bool {
+    match pattern {
+        TypedPattern::Wildcard => true,
+        TypedPattern::Binding { .. } => true,
+        TypedPattern::Tuple(elements) => elements.iter().all(pattern_is_catch_all),
+        _ => false,
+    }
+}
+
+fn analyze_pattern(
+    analyzer: &mut Analyzer,
+    pattern: &RawPattern,
+    expected_type: &DataType,
+    bound_names: &mut BTreeSet<String>,
+) -> Result<(TypedPattern, Vec<VariableEntry>), LangError> {
+    match pattern {
+        RawPattern::Wildcard(_) => Ok((TypedPattern::Wildcard, Vec::new())),
+        RawPattern::Identifier((name, span)) => {
+            if bound_names.contains(name) {
+                return Err(LangError::Compile(CompileError::new(
+                    format!("Pattern variable '{}' is bound multiple times", name),
+                    *span,
+                )));
+            }
+            bound_names.insert(name.clone());
+            let count = analyzer.var_counters.entry(name.clone()).or_insert(0);
+            let unique_name = format!("{}_{}", name, count);
+            *count += 1;
+            let entry = VariableEntry {
+                original_name: name.clone(),
+                unique_name: unique_name.clone(),
+                data_type: expected_type.clone(),
+                scope_depth: analyzer.scope_depth,
+                is_mutable: false,
+            };
+            Ok((
+                TypedPattern::Binding {
+                    name: (name.clone(), unique_name),
+                    data_type: expected_type.clone(),
+                },
+                alloc::vec![entry],
+            ))
+        }
+        RawPattern::Tuple(elements, span) => {
+            if let DataType::Tuple(expected_elements) = expected_type {
+                if expected_elements.len() != elements.len() {
+                    return Err(LangError::Compile(CompileError::new(
+                        format!(
+                            "Tuple pattern of length {} does not match tuple of length {}",
+                            elements.len(),
+                            expected_elements.len()
+                        ),
+                        *span,
+                    )));
+                }
+                let mut typed_elements = Vec::new();
+                let mut bindings = Vec::new();
+                for (subpattern, sub_type) in elements.iter().zip(expected_elements.iter()) {
+                    let (typed_sub, sub_bindings) =
+                        analyze_pattern(analyzer, subpattern, sub_type, bound_names)?;
+                    typed_elements.push(typed_sub);
+                    bindings.extend(sub_bindings);
+                }
+                Ok((TypedPattern::Tuple(typed_elements), bindings))
+            } else {
+                Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "Tuple pattern cannot match value of type '{}'",
+                        expected_type
+                    ),
+                    *span,
+                )))
+            }
+        }
+        RawPattern::Path {
+            segments,
+            subpatterns,
+            span,
+        } => {
+            if let DataType::Enum(enum_name) = expected_type {
+                let variant_name =
+                    segments
+                        .last()
+                        .map(|(name, _)| name.clone())
+                        .ok_or_else(|| {
+                            LangError::Compile(CompileError::new("Invalid enum pattern", *span))
+                        })?;
+                if segments.len() > 1 {
+                    let first_segment = &segments[0].0;
+                    if first_segment != enum_name {
+                        return Err(LangError::Compile(CompileError::new(
+                            format!(
+                                "Expected enum '{}' but pattern refers to '{}'",
+                                enum_name, first_segment
+                            ),
+                            segments[0].1,
+                        )));
+                    }
+                }
+                let variant_info = {
+                    let enum_info = analyzer.enum_table.get(enum_name).ok_or_else(|| {
+                        LangError::Compile(CompileError::new(
+                            format!("Unknown enum '{}'", enum_name),
+                            *span,
+                        ))
+                    })?;
+                    enum_info
+                        .variants
+                        .get(&variant_name)
+                        .cloned()
+                        .ok_or_else(|| {
+                            LangError::Compile(CompileError::new(
+                                format!(
+                                    "Enum '{}' has no variant named '{}'",
+                                    enum_name, variant_name
+                                ),
+                                *span,
+                            ))
+                        })?
+                };
+                if variant_info.field_types.len() != subpatterns.len() {
+                    return Err(LangError::Compile(CompileError::new(
+                        format!(
+                            "Variant '{}' expects {} fields, but {} patterns were provided",
+                            variant_name,
+                            variant_info.field_types.len(),
+                            subpatterns.len()
+                        ),
+                        *span,
+                    )));
+                }
+                let mut typed_fields = Vec::new();
+                let mut bindings = Vec::new();
+                for (subpattern, field_type) in
+                    subpatterns.iter().zip(variant_info.field_types.iter())
+                {
+                    let (typed_sub, sub_bindings) =
+                        analyze_pattern(analyzer, subpattern, field_type, bound_names)?;
+                    typed_fields.push(typed_sub);
+                    bindings.extend(sub_bindings);
+                }
+                Ok((
+                    TypedPattern::EnumVariant {
+                        enum_name: enum_name.clone(),
+                        variant_name,
+                        fields: typed_fields,
+                    },
+                    bindings,
+                ))
+            } else {
+                Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "Only enum values can be matched with path patterns, found type '{}'",
+                        expected_type
+                    ),
+                    *span,
+                )))
+            }
+        }
+        RawPattern::Literal(token, span) => {
+            let literal = match token {
+                Token::IntLiteral(val) => {
+                    if *expected_type != DataType::I32 {
+                        return Err(LangError::Compile(CompileError::new(
+                            format!(
+                                "Integer literal cannot match value of type '{}'",
+                                expected_type
+                            ),
+                            *span,
+                        )));
+                    }
+                    LiteralValue::I32(*val)
+                }
+                Token::FloatLiteral(val) => {
+                    if *expected_type != DataType::F64 {
+                        return Err(LangError::Compile(CompileError::new(
+                            format!(
+                                "Float literal cannot match value of type '{}'",
+                                expected_type
+                            ),
+                            *span,
+                        )));
+                    }
+                    LiteralValue::F64(*val)
+                }
+                Token::True => {
+                    if *expected_type != DataType::Bool {
+                        return Err(LangError::Compile(CompileError::new(
+                            format!(
+                                "Boolean literal cannot match value of type '{}'",
+                                expected_type
+                            ),
+                            *span,
+                        )));
+                    }
+                    LiteralValue::Bool(true)
+                }
+                Token::False => {
+                    if *expected_type != DataType::Bool {
+                        return Err(LangError::Compile(CompileError::new(
+                            format!(
+                                "Boolean literal cannot match value of type '{}'",
+                                expected_type
+                            ),
+                            *span,
+                        )));
+                    }
+                    LiteralValue::Bool(false)
+                }
+                Token::StringLiteral(_) => {
+                    if *expected_type != DataType::String {
+                        return Err(LangError::Compile(CompileError::new(
+                            format!(
+                                "String literal cannot match value of type '{}'",
+                                expected_type
+                            ),
+                            *span,
+                        )));
+                    }
+                    // String pattern matching is not supported due to runtime constraints
+                    return Err(LangError::Compile(CompileError::new(
+                        "Matching on string literals is not supported",
+                        *span,
+                    )));
+                }
+                _ => {
+                    return Err(LangError::Compile(CompileError::new(
+                        "Unsupported literal pattern",
+                        *span,
+                    )));
+                }
+            };
+            Ok((TypedPattern::Literal(literal), Vec::new()))
         }
     }
 }

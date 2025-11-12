@@ -1,0 +1,7 @@
+{
+  "expect": "error",
+  "error": {
+    "variant": "compile",
+    "message_contains": "Match expression on type 'i32' is not exhaustive; add a '_' arm to cover remaining cases"
+  }
+}

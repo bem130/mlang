@@ -3,7 +3,7 @@ use mylang_wasm_codegen::WasmGenerator;
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use wasmi::{core::Trap, Caller, Engine, Linker, Module, Store};
+use wasmi::{Caller, Engine, Linker, Module, Store, core::Trap};
 
 #[derive(Debug, Deserialize)]
 struct FunctionMetadata {
@@ -88,14 +88,10 @@ fn passing_samples_emit_expected_stdout() {
         let stdout = run_wasm_and_capture_stdout(&wat)
             .unwrap_or_else(|err| panic!("failed to execute {}: {}", sample.name, err));
 
-        let actual_lines: Vec<String> = stdout
-            .lines()
-            .map(|line| line.to_string())
-            .collect();
+        let actual_lines: Vec<String> = stdout.lines().map(|line| line.to_string()).collect();
 
         assert_eq!(
-            actual_lines,
-            expected_stdout,
+            actual_lines, expected_stdout,
             "stdout mismatch for sample {}",
             sample.name
         );
@@ -228,6 +224,35 @@ fn load_samples(subdir: &str) -> Vec<SampleCase> {
             }
         })
         .collect()
+}
+
+#[test]
+fn nested_tuple_patterns_execute_correctly() {
+    let source = r#"
+fn main() {
+    let total = match (1, (2, 3)) {
+        (a, (b, c)) => $a + b + c$,
+    };
+    println(i32_to_string(total));
+}
+"#;
+
+    let analysis = analyze_source(source).expect("analysis should succeed");
+    let mylang_core::AnalysisResult {
+        typed_ast,
+        function_table,
+        string_headers,
+        static_offset,
+    } = analysis;
+
+    let mut generator = WasmGenerator::new(function_table, string_headers, static_offset);
+    let wat = generator
+        .generate(&typed_ast)
+        .expect("code generation should succeed");
+
+    let stdout = run_wasm_and_capture_stdout(&wat).expect("executing Wasm module should succeed");
+
+    assert_eq!(stdout.trim(), "6");
 }
 
 fn samples_root() -> PathBuf {

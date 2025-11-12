@@ -1,0 +1,57 @@
+// 実用的なサンプル: タプルとmatch式を活用した日次メトリクス集計
+// 目的: 新しく導入されたstruct/enum宣言とタプル・match式の連携を検証する。
+
+struct SensorReading {
+    label: string,
+    value: i32,
+}
+
+enum Status {
+    Stable,
+    Alert,
+    Mixed,
+}
+
+fn combine_metrics(baseline: i32, delta: i32, goal: i32) -> i32 {
+    let metrics = (baseline, (delta, goal));
+    match metrics {
+        (base, (change, target)) => $base + change + target$,
+    }
+}
+
+fn describe_status(is_stable: bool) -> string {
+    match is_stable {
+        true => "stable",
+        false => "alert",
+    }
+}
+
+fn format_summary(total: i32, min: i32, max: i32) -> string {
+    let metrics = (total, (min, max));
+    match metrics {
+        (overall, (minimum, maximum)) => {
+            let part1 = string_concat "Total load: " (i32_to_string overall);
+            let part2 = string_concat ", min: " (i32_to_string minimum);
+            let part3 = string_concat ", max: " (i32_to_string maximum);
+            string_concat part1 (string_concat part2 part3)
+        },
+    }
+}
+
+fn main() {
+    println "--- Daily Metrics ---";
+
+    let metrics = (10, (3, 7));
+    let combined = match metrics {
+        (baseline, (delta, goal)) => combine_metrics(baseline, delta, goal),
+    };
+    let summary = match metrics {
+        (_, (min, max)) => format_summary(combined, min, max),
+    };
+    let descriptor = describe_status(false);
+
+    println string_concat "Combined total: " (i32_to_string combined);
+    println string_concat "Summary: " summary;
+    println string_concat "Status descriptor: " descriptor;
+    println "Struct and enum declarations parsed successfully.";
+}

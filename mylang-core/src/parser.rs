@@ -31,6 +31,8 @@ impl Parser {
         while !self.is_at_end() {
             match self.peek() {
                 Some(Token::Fn) => nodes.push(self.parse_fn_def()?),
+                Some(Token::Struct) => nodes.push(self.parse_struct_def()?),
+                Some(Token::Enum) => nodes.push(self.parse_enum_def()?),
                 _ => {
                     return Err(ParseError::new(
                         "Expected function definition at toplevel",
@@ -90,6 +92,91 @@ impl Parser {
             params,
             return_type,
             body: Box::new(body),
+            span: combine_spans(start_span, end_span),
+        })
+    }
+
+    fn parse_struct_def(&mut self) -> Result<RawAstNode, LangError> {
+        let start_span = self.consume(Token::Struct)?.1;
+        let (name, name_span) = self.consume_identifier()?;
+        self.consume(Token::LBrace)?;
+
+        let mut fields = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let (field_name, field_span) = self.consume_identifier()?;
+            self.consume(Token::Colon)?;
+            let (type_name, type_span) = self.consume_identifier()?;
+            fields.push(RawStructField {
+                name: (field_name, field_span),
+                type_name: (type_name, type_span),
+            });
+
+            if !self.check_and_consume(Token::Comma) {
+                break;
+            }
+        }
+
+        // 末尾の余分なカンマを許容
+        while self.peek() == Some(&Token::Comma) {
+            self.advance();
+        }
+
+        let end_span = self.consume(Token::RBrace)?.1;
+
+        Ok(RawAstNode::StructDef {
+            name: (name, name_span),
+            fields,
+            span: combine_spans(start_span, end_span),
+        })
+    }
+
+    fn parse_enum_def(&mut self) -> Result<RawAstNode, LangError> {
+        let start_span = self.consume(Token::Enum)?.1;
+        let (name, name_span) = self.consume_identifier()?;
+        self.consume(Token::LBrace)?;
+
+        let mut variants = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let (variant_name, variant_span) = self.consume_identifier()?;
+            let mut end_span = variant_span;
+            let kind = if self.peek() == Some(&Token::LParen) {
+                self.consume(Token::LParen)?;
+                let mut fields = Vec::new();
+                if self.peek() != Some(&Token::RParen) {
+                    loop {
+                        let (type_name, type_span) = self.consume_identifier()?;
+                        fields.push((type_name, type_span));
+                        if !self.check_and_consume(Token::Comma) {
+                            break;
+                        }
+                    }
+                }
+                end_span = self.consume(Token::RParen)?.1;
+                RawEnumVariantKind::Tuple(fields)
+            } else {
+                RawEnumVariantKind::Unit
+            };
+
+            variants.push(RawEnumVariant {
+                name: (variant_name, variant_span),
+                kind,
+                span: combine_spans(variant_span, end_span),
+            });
+
+            if !self.check_and_consume(Token::Comma) {
+                break;
+            }
+        }
+
+        while self.peek() == Some(&Token::Comma) {
+            self.advance();
+        }
+
+        let end_span = self.consume(Token::RBrace)?.1;
+
+        Ok(RawAstNode::EnumDef {
+            name: (name, name_span),
+            variants,
             span: combine_spans(start_span, end_span),
         })
     }
@@ -189,6 +276,8 @@ impl Parser {
             self.parse_block()
         } else if self.peek() == Some(&Token::While) {
             self.parse_while_loop()
+        } else if self.peek() == Some(&Token::Match) {
+            self.parse_match_expression()
         } else {
             self.parse_sexpression()
         }
@@ -206,6 +295,123 @@ impl Parser {
             body: Box::new(body),
             span: combine_spans(start_span, end_span),
         })
+    }
+
+    fn parse_match_expression(&mut self) -> Result<RawAstNode, LangError> {
+        let start_span = self.consume(Token::Match)?.1;
+        let value = self.parse_expression()?;
+        self.consume(Token::LBrace)?;
+
+        let mut arms = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let pattern = self.parse_pattern()?;
+            self.consume(Token::FatArrow)?;
+            let body = self.parse_expression()?;
+            let arm_span = combine_spans(pattern.span(), body.span());
+            arms.push(RawMatchArm {
+                pattern,
+                body: Box::new(body),
+                span: arm_span,
+            });
+
+            if !self.check_and_consume(Token::Comma) {
+                break;
+            }
+        }
+
+        while self.peek() == Some(&Token::Comma) {
+            self.advance();
+        }
+
+        let end_span = self.consume(Token::RBrace)?.1;
+
+        Ok(RawAstNode::Match {
+            value: Box::new(value),
+            arms,
+            span: combine_spans(start_span, end_span),
+        })
+    }
+
+    fn parse_pattern(&mut self) -> Result<RawPattern, LangError> {
+        let (token, span) = self
+            .peek_full()
+            .cloned()
+            .ok_or_else(|| ParseError::new("Unexpected end of pattern", self.peek_span()))?;
+
+        match token {
+            Token::Identifier(name) if name == "_" => {
+                self.advance();
+                Ok(RawPattern::Wildcard(span))
+            }
+            Token::Identifier(_) => {
+                let mut segments = Vec::new();
+                let (first_name, first_span) = self.consume_identifier()?;
+                let mut end_span = first_span;
+                segments.push((first_name, first_span));
+                while self.peek() == Some(&Token::DoubleColon) {
+                    self.advance();
+                    let (seg_name, seg_span) = self.consume_identifier()?;
+                    segments.push((seg_name, seg_span));
+                    end_span = seg_span;
+                }
+
+                if segments.len() == 1 && self.peek() != Some(&Token::LParen) {
+                    return Ok(RawPattern::Identifier(segments.remove(0)));
+                }
+
+                let subpatterns = if self.peek() == Some(&Token::LParen) {
+                    self.consume(Token::LParen)?;
+                    let mut patterns = Vec::new();
+                    if self.peek() != Some(&Token::RParen) {
+                        loop {
+                            let pat = self.parse_pattern()?;
+                            patterns.push(pat);
+                            if !self.check_and_consume(Token::Comma) {
+                                break;
+                            }
+                        }
+                    }
+                    end_span = self.consume(Token::RParen)?.1;
+                    patterns
+                } else {
+                    Vec::new()
+                };
+
+                Ok(RawPattern::Path {
+                    segments,
+                    subpatterns,
+                    span: combine_spans(span, end_span),
+                })
+            }
+            Token::LParen => {
+                let start_span = span;
+                self.consume(Token::LParen)?;
+                let mut elements = Vec::new();
+                if self.peek() != Some(&Token::RParen) {
+                    loop {
+                        let pat = self.parse_pattern()?;
+                        elements.push(pat);
+                        if !self.check_and_consume(Token::Comma) {
+                            break;
+                        }
+                    }
+                }
+                let end_span = self.consume(Token::RParen)?.1;
+                Ok(RawPattern::Tuple(
+                    elements,
+                    combine_spans(start_span, end_span),
+                ))
+            }
+            Token::IntLiteral(_)
+            | Token::FloatLiteral(_)
+            | Token::True
+            | Token::False
+            | Token::StringLiteral(_) => {
+                let (t, s) = self.advance();
+                Ok(RawPattern::Literal(t, s))
+            }
+            _ => Err(ParseError::new("Invalid pattern", span).into()),
+        }
     }
 
     /// S式（S-expression）をパースする
@@ -326,17 +532,40 @@ impl Parser {
     /// `( ... )` で囲まれたS式グループをパースする
     fn parse_s_expr_group(&mut self) -> Result<RawExprPart, LangError> {
         let start_span = self.consume(Token::LParen)?.1;
-        // グループの中身は、単一のS式としてパースする
-        let inner_expr = self.parse_sexpression()?;
+        if self.peek() == Some(&Token::RParen) {
+            let end_span = self.consume(Token::RParen)?.1;
+            return Ok(RawExprPart::TupleLiteral(
+                vec![],
+                combine_spans(start_span, end_span),
+            ));
+        }
+
+        let first_expr = self.parse_sexpression()?;
+
+        if self.peek() == Some(&Token::Comma) {
+            let mut elements = vec![first_expr];
+            while self.check_and_consume(Token::Comma) {
+                if self.peek() == Some(&Token::RParen) {
+                    break;
+                }
+                let element = self.parse_sexpression()?;
+                elements.push(element);
+            }
+            let end_span = self.consume(Token::RParen)?.1;
+            return Ok(RawExprPart::TupleLiteral(
+                elements,
+                combine_spans(start_span, end_span),
+            ));
+        }
+
         let end_span = self.consume(Token::RParen)?.1;
 
-        if let RawAstNode::Expr(parts) = inner_expr {
+        if let RawAstNode::Expr(parts) = first_expr {
             Ok(RawExprPart::Group(
                 parts,
                 combine_spans(start_span, end_span),
             ))
         } else {
-            // parse_sexpressionは常にExprを返すはず
             unreachable!()
         }
     }
