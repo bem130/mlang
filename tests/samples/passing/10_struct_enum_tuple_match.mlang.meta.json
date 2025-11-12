@@ -1,0 +1,16 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "combine_metrics", "params": ["i32", "i32", "i32"], "return_type": "i32"},
+    {"name": "describe_status", "params": ["bool"], "return_type": "string"},
+    {"name": "format_summary", "params": ["i32", "i32", "i32"], "return_type": "string"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "--- Daily Metrics ---",
+    "Combined total: 20",
+    "Summary: Total load: 20, min: 3, max: 7",
+    "Status descriptor: alert",
+    "Struct and enum declarations parsed successfully."
+  ]
+}
