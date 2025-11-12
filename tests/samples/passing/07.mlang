@@ -4,17 +4,15 @@
 
 // --- ユーティリティ関数 ---
 // nがdivisorで割り切れるかを判定する。
-// mylangには剰余(%)演算子がないため、整数除算と乗算で代用する。
-fn is_divisible_by(n: i32, divisor: i32) -> bool {
+fn is_divisible_by |n, divisor|
     // n - (divisor * (n / divisor)) == 0 であれば、割り切れる
     $n - (divisor * (n / divisor)) == 0$
-}
+: (i32, i32) -> bool;
 
 
 // --- 素数判定のコアロジック ---
 // nが、dから2までのいずれかの数で割り切れるかを再帰的にチェックする。
-// これは is_prime のためのヘルパー関数。
-fn has_divisor_from(n: i32, d: i32) -> bool {
+fn has_divisor_from |n, d|
     if $d <= 1$ {
         // 1までチェックして割り切れなければ、約数はない
         false
@@ -27,29 +25,26 @@ fn has_divisor_from(n: i32, d: i32) -> bool {
             has_divisor_from(n, $d - 1$)
         }
     }
-}
+: (i32, i32) -> bool;
 
 // nが素数かどうかを判定する。
-fn is_prime(n: i32) -> bool {
+fn is_prime |n|
     if $n <= 1$ {
         false // 1以下は素数ではない
     } else {
-        // nの平方根までチェックするのが効率的だが、sqrtがないため n/2 までチェックする。
-        // `has_divisor_from`がtrue(約数あり)なら素数ではないので、
-        // if式を使って結果を反転させる (not演算子の代用)。
+        // n/2 までチェックする
         if has_divisor_from(n, $n / 2$) {
             false
         } else {
             true
         }
     }
-}
+: (i32) -> bool;
 
 
 // --- メインの再帰ループ ---
 // nから2までカウントダウンしながら、素数を見つけて表示する。
-// これが for (i = n; i > 1; i--) に相当する。
-fn find_primes_down_from(n: i32) {
+fn find_primes_down_from |n|
     if $n < 2$ {
         // ベースケース: 2より小さくなったら再帰を停止
         do_nothing()
@@ -58,29 +53,25 @@ fn find_primes_down_from(n: i32) {
         find_primes_down_from($n - 1$);
 
         // 再帰から戻ってきた後、現在のnが素数か判定して表示
-        // (これにより、昇順で表示される)
         if is_prime(n) {
             println string_concat "Found prime: " (i32_to_string n);
         } else {
-            // 素数でなければ何もしない (Unitを返す)
             {}
         }
     }
-}
+: (i32) -> ();
 
 // 何も行わないUnitを返す関数
-fn do_nothing() {}
+fn do_nothing || {} : () -> ();
 
 
-// --- プログラムのエントリーポイント ---
-fn main() {
-    let limit = 100;
-    println "--- Prime Number Finder ---";
-    println string_concat "Finding all prime numbers up to " (i32_to_string limit);
-    println ""; // 空行を出力
+// --- プログラムの暗黙的なエントリーポイント ---
+let limit 100;
+println "--- Prime Number Finder ---";
+println string_concat "Finding all prime numbers up to " (i32_to_string limit);
+println ""; // 空行を出力
 
-    find_primes_down_from(limit);
+find_primes_down_from(limit);
 
-    println "";
-    println "--- Search finished. ---";
-}
+println "";
+println "--- Search finished. ---";

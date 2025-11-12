@@ -1,13 +1,11 @@
-fn main() {
-    let mut counter = 0;
-    counter = $counter + 1$;
+let mut counter 0;
+set counter $counter + 1$;
 
-    let toggled = {
-        let mut flag = true;
-        flag = false;
-        flag
-    };
+let toggled {
+    let mut flag true;
+    set flag false;
+    flag
+};
 
-    let message = string_concat("count is ", i32_to_string(counter));
-    println(message);
-}
+let message string_concat("count is ", i32_to_string(counter));
+println(message);

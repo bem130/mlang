@@ -4,106 +4,93 @@
 
 // --- 1. 型のシャドーイングのテスト ---
 // スコープ内で変数の「型」が上書きされ、スコープを抜けると元に戻ることを確認する。
-fn test_type_shadowing() {
-    println "--- 1. Testing Type Shadowing ---";
-    let x = 100; // x は i32 型
-    println string_concat "  - Before block, x (i32) = " (i32_to_string x);
-
+fn test_type_shadowing ||
     {
-        // このブロック内では、'x'はstring型としてシャドーイングされる。
-        let x = "shadow_string";
-        println string_concat "  - Inside block, x (string) = " x;
+        println "--- 1. Testing Type Shadowing ---";
+        let x 100; // x は i32 型
+        println string_concat "  - Before block, x (i32) = " (i32_to_string x);
 
-        // 内側のスコープでさらにシャドーイング
-        let x = true; // x は bool 型
-        println string_concat "    - Deeper inside, x (bool) = " (if x {"true"} else {"false"});
-    };
+        {
+            // このブロック内では、'x'はstring型としてシャドーイングされる。
+            let x "shadow_string";
+            println string_concat "  - Inside block, x (string) = " x;
 
-    // ブロックを抜けると、xは元のi32型に戻る。
-    // もしコンパイラが型情報を正しく復元できなければ、
-    // ここで i32_to_string に string を渡そうとして型エラーになるはず。
-    println string_concat "  - After block, x (i32) = " (i32_to_string x);
-}
+            // 内側のスコープでさらにシャドーイング
+            let x true; // x は bool 型
+            println string_concat "    - Deeper inside, x (bool) = " (if x {"true"} else {"false"});
+        };
+
+        // ブロックを抜けると、xは元のi32型に戻る。
+        println string_concat "  - After block, x (i32) = " (i32_to_string x);
+    }
+: () -> ();
 
 // --- 2. 深くネストした式の評価テスト ---
 // ifやブロックが値を返す性質を利用して、複雑に入れ子になった式を定義する。
-fn test_nested_expressions() {
-    println "--- 2. Testing Deeply Nested Expressions ---";
+fn test_nested_expressions ||
+    {
+        println "--- 2. Testing Deeply Nested Expressions ---";
 
-    let initial_value = 5;
-    let result = {
-        let a = $initial_value * 2$; // a = 10
-        if $a > 0$ {
-            // このブロックの結果がifの結果になる
-            {
-                // 【修正点】中置記法は $$ で囲む必要がある
-                let b = $a + 5$; // b = 15
-                // このifの結果がブロックの結果になる
-                if is_even(b) {
-                    0 // bは奇数なのでここは通らない
-                } else {
-                    $b * 10$ // 15 * 10 = 150
+        let initial_value 5;
+        let result {
+            let a $initial_value * 2$; // a = 10
+            if $a > 0$ {
+                {
+                    let b $a + 5$; // b = 15
+                    if is_even(b) {
+                        0 // bは奇数なのでここは通らない
+                    } else {
+                        $b * 10$ // 15 * 10 = 150
+                    }
                 }
+            } else {
+                -1 // a > 0 なのでここは通らない
             }
-        } else {
-            -1 // a > 0 なのでここは通らない
-        }
-    }; // result には 150 が束縛されるはず
+        }; // result には 150 が束縛されるはず
 
-    println string_concat "  - Result of nested expression: " (i32_to_string result);
-}
+        println string_concat "  - Result of nested expression: " (i32_to_string result);
+    }
+: () -> ();
 
 
 // --- 3. Unit型 (void) の取り扱いテスト ---
 
 // 何もせず、何も返さない (暗黙的にUnit型を返す) 関数。
-fn do_nothing() {
-    // この関数は副作用のみで構成することもできるが、今回は完全に空。
-    // コンパイラはUnitを返す関数として正しく処理する必要がある。
-}
+fn do_nothing || {} : () -> ();
 
-fn test_unit_type() {
-    println "--- 3. Testing Unit Type '()' Handling ---";
+fn test_unit_type ||
+    {
+        println "--- 3. Testing Unit Type '()' Handling ---";
 
-    // 1. Unitを返す関数の呼び出し
-    // この呼び出しは値を生まず、スタックに何も積まないはず。
-    do_nothing();
-    println "  - 'do_nothing()' was called successfully.";
+        // 1. Unitを返す関数の呼び出し
+        do_nothing();
+        println "  - 'do_nothing()' was called successfully.";
 
-    // 2. 空ブロックを変数に束縛
-    // mylangではletは文であり値を返さない。右辺の{}はUnit型の式。
-    // この文は有効であり、エラーにならないはず。
-    let empty = {};
+        // 2. 空ブロックを変数に束縛
+        let empty {};
 
-    // 3. 両方の分岐がUnitを返すif式
-    // このif式全体がUnit型の式となる。
-    let result_of_if = if true {
-        do_nothing() // Unitを返す
-    } else {
-        {} // Unitを返す
-    };
-    
-    // Unit型の値は操作できないが、存在は確認できる。
-    println "  - Unit-returning expressions were handled successfully.";
-}
+        // 3. 両方の分岐がUnitを返すif式
+        let result_of_if if true {
+            do_nothing() // Unitを返す
+        } else {
+            {} // Unitを返す
+        };
+        
+        println "  - Unit-returning expressions were handled successfully.";
+    }
+: () -> ();
 
 
 // --- ヘルパー関数 ---
-fn is_even(n: i32) -> bool {
-    if $n == 0$ { true } else { is_odd($n - 1$) }
-}
-fn is_odd(n: i32) -> bool {
-    if $n == 0$ { false } else { is_even($n - 1$) }
-}
+fn is_even |n| if $n == 0$ { true } else { is_odd($n - 1$) } : (i32) -> bool;
+fn is_odd |n| if $n == 0$ { false } else { is_even($n - 1$) } : (i32) -> bool;
 
 
-// --- メイン関数: 全てのテストスイートを実行 ---
-fn main() {
-    println "--- mylang edge-case test suite start ---";
-    
-    test_type_shadowing();
-    test_nested_expressions();
-    test_unit_type();
+// --- 暗黙のメイン関数: 全てのテストスイートを実行 ---
+println "--- mylang edge-case test suite start ---";
 
-    println "--- mylang edge-case test suite finished ---";
-}
+test_type_shadowing();
+test_nested_expressions();
+test_unit_type();
+
+println "--- mylang edge-case test suite finished ---";

@@ -3,53 +3,49 @@
 // mylangには剰余演算子(%)がないため、
 // `a - (a / b) * b` という計算で代用するヘルパー関数を定義します。
 // この関数は a % b と同じ結果を返します。
-fn modulo(a: i32, b: i32) -> i32 {
-    $a - (a / b) * b$
-}
+fn modulo |a, b| $a - (a / b) * b$ : (i32, i32) -> i32;
 
 // ユークリッドの互除法を再帰的に実装し、2つの整数の最大公約数を求めます。
 // gcd(a, b) = 
 //   - a (if b is 0)
 //   - gcd(b, a % b) (otherwise)
-fn gcd(a: i32, b: i32) -> i32 {
+fn gcd |a, b|
     // ベースケース: bが0になったら、aが最大公約数です。
     if $b == 0$ {
         a
     } 
     // 再帰ステップ: gcd(b, a % b) を計算します。
     else {
-        let remainder = modulo(a, b);
+        let remainder modulo(a, b);
         gcd(b, remainder)
     }
-}
+: (i32, i32) -> i32;
 
-// --- プログラムのエントリーポイント ---
-fn main() {
-    println("--- Algorithm Showcase: Euclidean Algorithm for GCD ---");
-    println("");
+// --- プログラムの暗黙的なエントリーポイント ---
+println("--- Algorithm Showcase: Euclidean Algorithm for GCD ---");
+println("");
 
-    // --- テストケース1 ---
-    let a1 = 48;
-    let b1 = 18;
-    let result1 = gcd(a1, b1); // 期待される結果: 6
+// --- テストケース1 ---
+let a1 48;
+let b1 18;
+let result1 gcd(a1, b1); // 期待される結果: 6
 
-    let msg1 = string_concat("GCD of ", i32_to_string(a1));
-    let msg2 = string_concat(msg1, " and ");
-    let msg3 = string_concat(msg2, i32_to_string(b1));
-    let msg4 = string_concat(msg3, " is: ");
-    println(string_concat(msg4, i32_to_string(result1)));
+let msg1 string_concat("GCD of ", i32_to_string(a1));
+let msg2 string_concat(msg1, " and ");
+let msg3 string_concat(msg2, i32_to_string(b1));
+let msg4 string_concat(msg3, " is: ");
+println(string_concat(msg4, i32_to_string(result1)));
 
-    // --- テストケース2 ---
-    let a2 = 1071;
-    let b2 = 462;
-    let result2 = gcd(a2, b2); // 期待される結果: 21
-    
-    let msg5 = string_concat("GCD of ", i32_to_string(a2));
-    let msg6 = string_concat(msg5, " and ");
-    let msg7 = string_concat(msg6, i32_to_string(b2));
-    let msg8 = string_concat(msg7, " is: ");
-    println(string_concat(msg8, i32_to_string(result2)));
-    
-    println("");
-    println("Successfully calculated GCDs!");
-}
+// --- テストケース2 ---
+let a2 1071;
+let b2 462;
+let result2 gcd(a2, b2); // 期待される結果: 21
+
+let msg5 string_concat("GCD of ", i32_to_string(a2));
+let msg6 string_concat(msg5, " and ");
+let msg7 string_concat(msg6, i32_to_string(b2));
+let msg8 string_concat(msg7, " is: ");
+println(string_concat(msg8, i32_to_string(result2)));
+
+println("");
+println("Successfully calculated GCDs!");

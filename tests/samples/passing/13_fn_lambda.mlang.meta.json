@@ -1,0 +1,15 @@
+{
+  "expect": "ok",
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "unit"
+    },
+    {
+      "name": "factorial",
+      "params": ["i32"],
+      "return_type": "i32"
+    }
+  ]
+}

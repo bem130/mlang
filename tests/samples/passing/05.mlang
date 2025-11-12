@@ -5,19 +5,13 @@
 // --- 1. 複雑なブール論理のテスト ---
 
 // nがdivisorで割り切れるかを判定する。
-// mylangには剰余(%)演算子がないため、整数除算と乗算で代用する。
-// これにより、数式ブロック内での括弧付きの複雑な計算をテストする。
-fn is_divisible_by(n: i32, divisor: i32) -> bool {
+fn is_divisible_by |n, divisor|
     // n - (divisor * (n / divisor)) == 0
-    // 例: 10 / 3 = 3 (整数除算), 3 * 3 = 9, 10 - 9 = 1 != 0
     $n - (divisor * (n / divisor)) == 0$
-}
+: (i32, i32) -> bool;
 
 // 閏年(leap year)かどうかを判定する複雑な論理。
-// 1. 4で割り切れる年は閏年である。
-// 2. ただし、100で割り切れる年は平年である。
-// 3. ただし、400で割り切れる年は閏年である。
-fn is_leap_year(year: i32) -> bool {
+fn is_leap_year |year|
     if is_divisible_by(year, 400) {
         true
     } else {
@@ -27,88 +21,93 @@ fn is_leap_year(year: i32) -> bool {
             is_divisible_by(year, 4)
         }
     }
-}
+: (i32) -> bool;
 
-fn test_logic() {
-    println "--- 1. Testing Complex Boolean Logic ---";
-    println string_concat "  - Is 2024 a leap year? (true): " (if is_leap_year(2024) {"true"} else {"false"});
-    println string_concat "  - Is 1900 a leap year? (false): " (if is_leap_year(1900) {"true"} else {"false"});
-    println string_concat "  - Is 2000 a leap year? (true): " (if is_leap_year(2000) {"true"} else {"false"});
-}
+fn test_logic ||
+    {
+        println "--- 1. Testing Complex Boolean Logic ---";
+        println string_concat "  - Is 2024 a leap year? (true): " (if is_leap_year(2024) {"true"} else {"false"});
+        println string_concat "  - Is 1900 a leap year? (false): " (if is_leap_year(1900) {"true"} else {"false"});
+        println string_concat "  - Is 2000 a leap year? (true): " (if is_leap_year(2000) {"true"} else {"false"});
+    }
+: () -> ();
 
 // --- 2. 再帰による文字列生成 (メモリ負荷テスト) ---
 
 // 文字(実際には文字列)を指定された回数だけ繰り返し、連結した文字列を返す。
-// countが大きい場合、多数の`string_concat`呼び出しとメモリ確保が発生する。
-fn repeat_char(char: string, count: i32) -> string {
+fn repeat_char |char, count|
     if $count <= 0$ {
         "" // ベースケース: 空文字列
     } else {
         // 再帰ステップ: char + repeat_char(char, count - 1)
         string_concat char (repeat_char(char, $count - 1$))
     }
-}
+: (string, i32) -> string;
 
-fn test_string_building() {
-    println "--- 2. Testing Recursive String Building ---";
-    let separator = repeat_char("-", 40);
-    println string_concat "  - Generated Separator: " separator;
-}
+fn test_string_building ||
+    {
+        println "--- 2. Testing Recursive String Building ---";
+        let separator repeat_char("-", 40);
+        println string_concat "  - Generated Separator: " separator;
+    }
+: () -> ();
 
 
 // --- 3. 全機能の統合テスト ---
 
 // 複数の機能を組み合わせて、整形されたレポート文字列を生成する。
-fn generate_fiscal_report(year: i32, revenue: i32) -> string {
-    let header = string_concat "--- Fiscal Report for " (i32_to_string year);
-    
-    let year_type = if is_leap_year(year) {
-        " (Leap Year)"
-    } else {
-        " (Common Year)"
-    };
-
-    let rating = {
-        // ブロック式を使って評価を決定
-        if $revenue > 10000$ {
-            "Excellent"
+fn generate_fiscal_report |year, revenue|
+    {
+        let header string_concat "--- Fiscal Report for " (i32_to_string year);
+        
+        let year_type if is_leap_year(year) {
+            " (Leap Year)"
         } else {
-            if $revenue > 5000$ {
-                "Good"
+            " (Common Year)"
+        };
+
+        let rating {
+            // ブロック式を使って評価を決定
+            if $revenue > 10000$ {
+                "Excellent"
             } else {
-                "Needs Improvement"
+                if $revenue > 5000$ {
+                    "Good"
+                } else {
+                    "Needs Improvement"
+                }
             }
-        }
-    };
+        };
 
-    let summary = string_concat "  - Rating: " rating;
-    let separator = repeat_char("=", 20);
+        let summary string_concat "  - Rating: " rating;
+        let separator repeat_char("=", 20);
 
-    // `string_concat` を複数回ネストして最終レポートを組み立てる
-    string_concat
-        (string_concat header year_type)
-        (string_concat "\n" 
-            (string_concat summary 
-                (string_concat "\n" separator)))
-}
+        // `string_concat` を複数回ネストして最終レポートを組み立てる
+        string_concat
+            (string_concat header year_type)
+            (string_concat "\n" 
+                (string_concat summary 
+                    (string_concat "\n" separator)))
+    }
+: (i32, i32) -> string;
 
-fn test_integration() {
-    println "--- 3. Testing Feature Integration ---";
-    let report_2023 = generate_fiscal_report(2023, 8500);
-    println report_2023;
-    
-    let report_2024 = generate_fiscal_report(2024, 4200);
-    println report_2024;
-}
+fn test_integration ||
+    {
+        println "--- 3. Testing Feature Integration ---";
+        let report_2023 generate_fiscal_report(2023, 8500);
+        println report_2023;
+        
+        let report_2024 generate_fiscal_report(2024, 4200);
+        println report_2024;
+    }
+: () -> ();
 
 
-// --- メイン関数: 全てのテストスイートを実行 ---
-fn main() {
-    println "--- mylang integration test suite start ---";
-    
-    test_logic();
-    test_string_building();
-    test_integration();
+// --- 暗黙のメイン関数: 全てのテストスイートを実行 ---
+println "--- mylang integration test suite start ---";
 
-    println "--- mylang integration test suite finished ---";
-}
+test_logic();
+test_string_building();
+test_integration();
+
+println "--- mylang integration test suite finished ---";

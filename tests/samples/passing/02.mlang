@@ -1,19 +1,17 @@
-fn main() {
-    let x = 1;
-    println string_concat "Level 0: x = " (i32_to_string x); // -> 1
+let x 1;
+println string_concat "Level 0: x = " (i32_to_string x); // -> 1
 
-    let y = {
-        let x = 2; // シャドーイング
-        println string_concat "Level 1: x = " (i32_to_string x); // -> 2
-        let z = {
-            let x = 3; // さらにシャドーイング
-            println string_concat "Level 2: x = " (i32_to_string x); // -> 3
-            $x * 10$ // このブロックの返り値
-        };
-        println string_concat "Level 1: z = " (i32_to_string z); // -> 30
-        $x + z$ // このブロックの返り値
+let y {
+    let x 2; // シャドーイング
+    println string_concat "Level 1: x = " (i32_to_string x); // -> 2
+    let z {
+        let x 3; // さらにシャドーイング
+        println string_concat "Level 2: x = " (i32_to_string x); // -> 3
+        $x * 10$ // このブロックの返り値
     };
+    println string_concat "Level 1: z = " (i32_to_string z); // -> 30
+    $x + z$ // このブロックの返り値
+};
 
-    println string_concat "Level 0: y = " (i32_to_string y); // -> 32
-    println string_concat "Level 0: x is still " (i32_to_string x); // -> 1
-}
+println string_concat "Level 0: y = " (i32_to_string y); // -> 32
+println string_concat "Level 0: x is still " (i32_to_string x); // -> 1
