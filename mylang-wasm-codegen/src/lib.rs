@@ -23,6 +23,8 @@ pub struct WasmGenerator {
     match_value_locals: BTreeMap<usize, (String, DataType)>,
     tuple_temp_locals: BTreeMap<usize, String>,
     match_tuple_locals: BTreeMap<usize, (String, DataType)>,
+    lambdas_buffer: String,
+    lambda_count: u32,
 }
 
 impl WasmGenerator {
@@ -40,6 +42,8 @@ impl WasmGenerator {
             match_value_locals: BTreeMap::new(),
             tuple_temp_locals: BTreeMap::new(),
             match_tuple_locals: BTreeMap::new(),
+            lambdas_buffer: String::new(),
+            lambda_count: 0,
         }
     }
 
@@ -63,6 +67,8 @@ impl WasmGenerator {
         for node in ast {
             code_generator::generate(self, node)?;
         }
+
+        self.wat_buffer.push_str(&self.lambdas_buffer);
 
         self.wat_buffer
             .push_str("\n  (export \"_start\" (func $main))\n");
@@ -149,6 +155,7 @@ impl WasmGenerator {
             DataType::Vector(_) => "i32",
             DataType::Unit => "", // Unitは値を返さない
             DataType::Tuple(_) | DataType::Struct(_) | DataType::Enum(_) => "i32",
+            DataType::Function { .. } => "i32",
         }
     }
 

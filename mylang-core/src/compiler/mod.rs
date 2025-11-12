@@ -179,41 +179,89 @@ impl Analyzer {
         }
 
         for node in ast {
-            if let RawAstNode::FnDef {
-                name,
-                params,
-                return_type,
-                span,
-                ..
-            } = node
-            {
-                let func_name = &name.0;
-                let param_types = params
-                    .iter()
-                    .map(|(_, type_info)| self.string_to_type(&type_info.0, type_info.1))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let ret_type = match return_type {
-                    Some(rt) => self.string_to_type(&rt.0, rt.1)?,
-                    None => DataType::Unit,
-                };
-                if self.function_table.contains_key(func_name) {
-                    // 組み込み関数は上書きできない
-                    return Err(LangError::Compile(CompileError::new(
-                        format!(
-                            "Function '{}' is a built-in function and cannot be redefined",
-                            func_name
-                        ),
-                        name.1,
-                    )));
+            match node {
+                RawAstNode::FnDef {
+                    name,
+                    params,
+                    return_type,
+                    span,
+                    ..
+                } => {
+                    let func_name = &name.0;
+                    let param_types = params
+                        .iter()
+                        .map(|(_, type_info)| self.string_to_type(&type_info.0, type_info.1))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let ret_type = match return_type {
+                        Some(rt) => self.string_to_type(&rt.0, rt.1)?,
+                        None => DataType::Unit,
+                    };
+                    if self.function_table.contains_key(func_name) {
+                        // 組み込み関数は上書きできない
+                        return Err(LangError::Compile(CompileError::new(
+                            format!(
+                                "Function '{}' is a built-in function and cannot be redefined",
+                                func_name
+                            ),
+                            name.1,
+                        )));
+                    }
+                    self.function_table.insert(
+                        func_name.clone(),
+                        FunctionSignature {
+                            param_types,
+                            return_type: ret_type,
+                            definition_span: *span,
+                        },
+                    );
                 }
-                self.function_table.insert(
-                    func_name.clone(),
-                    FunctionSignature {
-                        param_types,
-                        return_type: ret_type,
-                        definition_span: *span,
-                    },
-                );
+                RawAstNode::LetHoist { name, value, span } => {
+                    // LetHoistのシグネチャを抽出 (新構文: fn name |params| body : type)
+                    // valueはBox<RawAstNode>で、その中にExpr(parts)があり、parts内にLambdaが含まれているはず
+                    if let RawAstNode::Expr(parts) = &**value {
+                        if let Some(RawExprPart::Lambda {
+                            params: lambda_params,
+                            return_type: raw_return_type,
+                            ..
+                        }) = parts.first()
+                        {
+                            let func_name = &name.0;
+                            let mut param_types = Vec::new();
+                            for ((_param_name, _), raw_param_type) in lambda_params {
+                                let param_type = if let Some((type_str, type_span)) = raw_param_type {
+                                    self.string_to_type(type_str, *type_span)?
+                                } else {
+                                    // TODO: 型推論を実装するまでは、型注釈がない場合はi32と仮定する
+                                    DataType::I32
+                                };
+                                param_types.push(param_type);
+                            }
+                            let ret_type = if let Some((type_str, type_span)) = raw_return_type {
+                                self.string_to_type(type_str, *type_span)?
+                            } else {
+                                DataType::Unit
+                            };
+                            if self.function_table.contains_key(func_name) {
+                                return Err(LangError::Compile(CompileError::new(
+                                    format!(
+                                        "Function '{}' is a built-in function and cannot be redefined",
+                                        func_name
+                                    ),
+                                    name.1,
+                                )));
+                            }
+                            self.function_table.insert(
+                                func_name.clone(),
+                                FunctionSignature {
+                                    param_types,
+                                    return_type: ret_type,
+                                    definition_span: *span,
+                                },
+                            );
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         Ok(())

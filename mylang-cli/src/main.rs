@@ -28,6 +28,8 @@ struct Cli {
 
     #[arg(long, help = "Run the code if the output format is wasm")]
     run: bool,
+    #[arg(long, help = "Compile as library (do not wrap top-level in an implicit main)")]
+    lib: bool,
 }
 
 /// Wasmの実行結果を処理するメイン関数
@@ -216,8 +218,9 @@ fn try_main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 2. フロントエンドによる解析 ---
     println!("解析中...");
-    let analysis_result =
-        analyze_source(source_code.trim()).map_err(|e| format!("コンパイルエラー: {}", e))?;
+    // `--lib` フラグの値を直接コンパイラコアに渡し、ASTレベルで暗黙のmain関数を処理させる
+    let analysis_result = analyze_source(source_code.trim(), cli.lib)
+        .map_err(|e| format!("コンパイルエラー: {}", e))?;
 
     // --- 3. バックエンドの選択とコード生成 ---
     println!("コード生成中 ({}) ...", cli.emit);

@@ -147,10 +147,10 @@ impl<'a> Lexer<'a> {
             '|' => {
                 self.last_char_was_ident_part = false;
                 if self.peek() == Some(&'|') {
-                    self.next_char();
+                    self.next_char(); // 2つ目の '|' を消費
                     Ok(Some((Token::OrOr, span)))
                 } else {
-                    Err(format!("Unexpected character: {} at {}", char, span))
+                    Ok(Some((Token::Pipe, span)))
                 }
             }
             '<' => {

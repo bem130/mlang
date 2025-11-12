@@ -73,7 +73,7 @@ fn passing_samples_work_as_expected() {
             ),
         };
 
-        let analysis = analyze_source(&sample.source)
+        let analysis = analyze_source(&sample.source, false)
             .unwrap_or_else(|err| panic!("expected Ok for {}, got Err: {}", sample.name, err));
 
         let mylang_core::AnalysisResult {
@@ -313,7 +313,7 @@ fn main() {
 }
 "#;
 
-    let analysis = analyze_source(source).expect("analysis should succeed");
+    let analysis = analyze_source(source, false).expect("analysis should succeed");
     let mylang_core::AnalysisResult {
         typed_ast,
         function_table,

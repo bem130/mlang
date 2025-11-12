@@ -32,20 +32,51 @@ pub enum RawAstNode {
         variants: Vec<RawEnumVariant>,
         span: Span,
     },
-    // let束縛
+    // let束縛（イミュータブル）
+    Let {
+        name: (String, Span),
+        value: Box<RawAstNode>,
+        span: Span,
+    },
+    // 旧: let束縛互換 (LetDef)
     LetDef {
         name: (String, Span),
         value: Box<RawAstNode>,
         is_mutable: bool,
         span: Span,
     },
-    // 変数への代入
+    // let mut束縛（ミュータブル）
+    LetMut {
+        name: (String, Span),
+        value: Box<RawAstNode>,
+        span: Span,
+    },
+    // let hoist束縛（自己再帰関数用）
+    LetHoist {
+        name: (String, Span),
+        value: Box<RawAstNode>,
+        span: Span,
+    },
+    // 代入 (set 識別子 式)
+    Set {
+        name: (String, Span),
+        value: Box<RawAstNode>,
+        span: Span,
+    },
+    // 旧: 代入互換 (Assignment)
     Assignment {
         name: (String, Span),
         value: Box<RawAstNode>,
         span: Span,
     },
-    // `{}` で囲まれたブロック
+    // ラムダ式 |arg1, arg2| body
+    Lambda {
+        params: Vec<((String, Span), Option<(String, Span)>)>,
+        body: Box<RawAstNode>,
+        return_type: Option<(String, Span)>,
+        span: Span,
+    },
+    // ブロック
     Block {
         statements: Vec<RawAstNode>,
         span: Span,
@@ -124,7 +155,20 @@ pub enum RawExprPart {
         else_branch: Box<RawAstNode>,
         span: Span,
     },
+    /// match式。
+    MatchExpr {
+        value: Box<RawAstNode>,
+        arms: Vec<RawMatchArm>,
+        span: Span,
+    },
     TupleLiteral(Vec<RawAstNode>, Span),
+    /// ラムダ式 `| arg1, arg2 | body`
+    Lambda {
+        params: Vec<((String, Span), Option<(String, Span)>)>,
+        body: Box<RawAstNode>,
+        return_type: Option<(String, Span)>,
+        span: Span,
+    },
 }
 
 // 数式リテラルの種類
@@ -225,9 +269,17 @@ pub enum TypedExprKind {
         value: Box<TypedExpr>,
         is_mutable: bool,
     },
+    LetHoistBinding {
+        name: (String, String),
+        value: Box<TypedExpr>,
+    },
     Assignment {
         name: (String, String),
         value: Box<TypedExpr>,
+    },
+    Lambda {
+        params: Vec<(String, DataType)>,
+        body: Box<TypedExpr>,
     },
     FunctionCall {
         name: String,
@@ -288,6 +340,10 @@ pub enum DataType {
     Tuple(Vec<DataType>),
     Struct(String),
     Enum(String),
+    Function {
+        params: Vec<DataType>,
+        return_type: Box<DataType>,
+    },
 }
 
 // エラーメッセージで型名を綺麗に表示するためのDisplay実装
@@ -312,6 +368,19 @@ impl fmt::Display for DataType {
             }
             DataType::Struct(name) => write!(f, "{}", name),
             DataType::Enum(name) => write!(f, "{}", name),
+            DataType::Function {
+                params,
+                return_type,
+            } => {
+                write!(f, "(")?;
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", param)?;
+                }
+                write!(f, ") -> {}", return_type)
+            }
         }
     }
 }
@@ -320,12 +389,17 @@ impl fmt::Display for DataType {
 impl RawAstNode {
     pub fn span(&self) -> Span {
         match self {
-            RawAstNode::Expr(parts) => parts.first().unwrap().span(), // 簡易
+            RawAstNode::Expr(parts) => parts.first().map_or(Span::default(), |p| p.span()),
             RawAstNode::FnDef { span, .. } => *span,
             RawAstNode::StructDef { span, .. } => *span,
             RawAstNode::EnumDef { span, .. } => *span,
+            RawAstNode::Let { span, .. } => *span,
             RawAstNode::LetDef { span, .. } => *span,
+            RawAstNode::LetMut { span, .. } => *span,
+            RawAstNode::LetHoist { span, .. } => *span,
+            RawAstNode::Set { span, .. } => *span,
             RawAstNode::Assignment { span, .. } => *span,
+            RawAstNode::Lambda { span, .. } => *span,
             RawAstNode::Block { span, .. } => *span,
             RawAstNode::While { span, .. } => *span,
             RawAstNode::Match { span, .. } => *span,
@@ -341,7 +415,9 @@ impl RawExprPart {
             RawExprPart::MathBlock(_, span) => *span,
             RawExprPart::TypeAnnotation(_, span) => *span,
             RawExprPart::IfExpr { span, .. } => *span,
+            RawExprPart::MatchExpr { span, .. } => *span,
             RawExprPart::TupleLiteral(_, span) => *span,
+            RawExprPart::Lambda { span, .. } => *span,
         }
     }
 }

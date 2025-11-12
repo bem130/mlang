@@ -12,6 +12,7 @@ use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use alloc::vec;
 
 /// トップレベルのRawAstNodeを型付きASTに変換するエントリーポイント
 pub fn analyze_toplevel(
@@ -124,10 +125,111 @@ pub fn analyze_toplevel(
                 span: *span,
             })
         }
-        _ => Err(LangError::Compile(CompileError::new(
-            "Only function definitions are allowed at the top level",
-            node.span(),
-        ))),
+        RawAstNode::LetHoist { name, value, span } => {
+            analyzer.var_counters.clear();
+            analyzer.enter_scope();
+
+            let func_name = &name.0;
+            let signature = analyzer.function_table.get(func_name).cloned().ok_or_else(|| {
+                LangError::Compile(CompileError::new(
+                    format!("Undefined function '{}'", func_name),
+                    name.1,
+                ))
+            })?;
+
+            let mut typed_params = Vec::new();
+            let lambda_body_node = if let RawAstNode::Expr(parts) = &**value {
+                if let Some(RawExprPart::Lambda {
+                    params: lambda_params,
+                    body,
+                    ..
+                }) = parts.first()
+                {
+                    if lambda_params.len() != signature.param_types.len() {
+                        return Err(LangError::Compile(CompileError::new(
+                            format!(
+                                "Mismatched number of parameters for function '{}': expected {}, but found {}",
+                                func_name,
+                                signature.param_types.len(),
+                                lambda_params.len()
+                            ),
+                            name.1,
+                        )));
+                    }
+                    for (i, (param_info, _param_type_info)) in lambda_params.iter().enumerate() {
+                        let param_name = &param_info.0;
+                        let param_type = signature.param_types[i].clone();
+                        analyzer.variable_table.push(VariableEntry {
+                            original_name: param_name.clone(),
+                            unique_name: param_name.clone(),
+                            data_type: param_type.clone(),
+                            scope_depth: analyzer.scope_depth,
+                            is_mutable: false,
+                        });
+                        typed_params.push((param_name.clone(), param_type));
+                    }
+                    body.as_ref()
+                } else {
+                    return Err(LangError::Compile(CompileError::new(
+                        "Invalid let hoist syntax: expected |params| body",
+                        *span,
+                    )));
+                }
+            } else {
+                return Err(LangError::Compile(CompileError::new(
+                    "Invalid let hoist syntax: expected |params| body",
+                    *span,
+                )));
+            };
+
+            // ラムダの本体を直接解析
+            let typed_body = analyze_expr(analyzer, lambda_body_node)?;
+
+            let mut return_type_resolved = signature.return_type.clone();
+
+            // main関数の型チェック
+            if func_name == "main" && return_type_resolved != DataType::Unit {
+                return Err(LangError::Compile(CompileError::new(
+                    "The 'main' function must have a return type of '()' or no return type",
+                    name.1,
+                )));
+            }
+
+            if typed_body.data_type != return_type_resolved {
+                if return_type_resolved == DataType::Unit {
+                    // 何もしない。コード生成器がdropを追加する
+                } else {
+                    return Err(LangError::Compile(CompileError::new(
+                        format!(
+                            "Mismatched return type: expected '{}', but function body returns '{}'",
+                            return_type_resolved, typed_body.data_type
+                        ),
+                        typed_body.span,
+                    )));
+                }
+            }
+
+            analyzer.leave_scope();
+
+            if func_name == "main" {
+                return_type_resolved = DataType::Unit;
+            }
+
+            Ok(TypedAstNode::FnDef {
+                name: func_name.clone(),
+                params: typed_params,
+                body: typed_body,
+                return_type: return_type_resolved,
+                span: *span,
+            })
+        }
+        _ => analyze_expr(analyzer, node).map(|expr| TypedAstNode::FnDef {
+            name: "main".to_string(),
+            params: vec![],
+            body: expr,
+            return_type: DataType::Unit,
+            span: node.span(),
+        }),
     }
 }
 
@@ -197,6 +299,74 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                 span: *span,
             })
         }
+        // 新しいRawAstNode互換: `let name = ...`
+        RawAstNode::Let { name, value, span } => {
+            let typed_value = analyze_expr(analyzer, value)?;
+            let count = analyzer.var_counters.entry(name.0.clone()).or_insert(0);
+            let unique_name = format!("{}_{}", name.0, count);
+            *count += 1;
+            analyzer.variable_table.push(VariableEntry {
+                original_name: name.0.clone(),
+                unique_name: unique_name.clone(),
+                data_type: typed_value.data_type.clone(),
+                scope_depth: analyzer.scope_depth,
+                is_mutable: false,
+            });
+            Ok(TypedExpr {
+                kind: TypedExprKind::LetBinding {
+                    name: (name.0.clone(), unique_name),
+                    value: Box::new(typed_value),
+                    is_mutable: false,
+                },
+                data_type: DataType::Unit,
+                span: *span,
+            })
+        }
+        RawAstNode::LetMut { name, value, span } => {
+            // mutable let
+            let typed_value = analyze_expr(analyzer, value)?;
+            let count = analyzer.var_counters.entry(name.0.clone()).or_insert(0);
+            let unique_name = format!("{}_{}", name.0, count);
+            *count += 1;
+            analyzer.variable_table.push(VariableEntry {
+                original_name: name.0.clone(),
+                unique_name: unique_name.clone(),
+                data_type: typed_value.data_type.clone(),
+                scope_depth: analyzer.scope_depth,
+                is_mutable: true,
+            });
+            Ok(TypedExpr {
+                kind: TypedExprKind::LetBinding {
+                    name: (name.0.clone(), unique_name),
+                    value: Box::new(typed_value),
+                    is_mutable: true,
+                },
+                data_type: DataType::Unit,
+                span: *span,
+            })
+        }
+        RawAstNode::LetHoist { name, value, span } => {
+            // hoisted binding: behave like immutable let for now
+            let typed_value = analyze_expr(analyzer, value)?;
+            let count = analyzer.var_counters.entry(name.0.clone()).or_insert(0);
+            let unique_name = format!("{}_{}", name.0, count);
+            *count += 1;
+            analyzer.variable_table.push(VariableEntry {
+                original_name: name.0.clone(),
+                unique_name: unique_name.clone(),
+                data_type: typed_value.data_type.clone(),
+                scope_depth: analyzer.scope_depth,
+                is_mutable: false,
+            });
+            Ok(TypedExpr {
+                kind: TypedExprKind::LetHoistBinding {
+                    name: (name.0.clone(), unique_name),
+                    value: Box::new(typed_value),
+                },
+                data_type: DataType::Unit,
+                span: *span,
+            })
+        }
         RawAstNode::Assignment { name, value, span } => {
             let typed_value = analyze_expr(analyzer, value)?;
             if let Some(entry) = analyzer.find_variable(&name.0) {
@@ -232,6 +402,110 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                     name.1,
                 )))
             }
+        }
+        RawAstNode::Set { name, value, span } => {
+            // map `set` to assignment semantics
+            let typed_value = analyze_expr(analyzer, value)?;
+            if let Some(entry) = analyzer.find_variable(&name.0) {
+                if !entry.is_mutable {
+                    return Err(LangError::Compile(CompileError::new(
+                        format!(
+                            "Cannot assign to immutable variable '{}'",
+                            entry.original_name
+                        ),
+                        name.1,
+                    )));
+                }
+                if entry.data_type != typed_value.data_type {
+                    return Err(LangError::Compile(CompileError::new(
+                        format!(
+                            "Type mismatch in assignment to '{}': expected '{}' but found '{}'",
+                            entry.original_name, entry.data_type, typed_value.data_type
+                        ),
+                        typed_value.span,
+                    )));
+                }
+                Ok(TypedExpr {
+                    kind: TypedExprKind::Assignment {
+                        name: (entry.original_name.clone(), entry.unique_name.clone()),
+                        value: Box::new(typed_value),
+                    },
+                    data_type: DataType::Unit,
+                    span: *span,
+                })
+            } else {
+                Err(LangError::Compile(CompileError::new(
+                    format!("Undefined variable '{}'", name.0),
+                    name.1,
+                )))
+            }
+        }
+        RawAstNode::Lambda {
+            params: lambda_params,
+            body: lambda_body,
+            return_type: raw_return_type,
+            span,
+        } => {
+            analyzer.enter_scope();
+            let mut typed_params = Vec::new();
+            let mut param_types = Vec::new();
+
+            for ((param_name, _param_span), raw_param_type) in lambda_params {
+                let param_type = if let Some((type_str, type_span)) = raw_param_type {
+                    analyzer.string_to_type(type_str, *type_span)?
+                } else {
+                    // TODO: 型推論を実装するまでは、型注釈がない場合はi32と仮定する
+                    DataType::I32
+                };
+                analyzer.variable_table.push(VariableEntry {
+                    original_name: param_name.clone(),
+                    unique_name: param_name.clone(), // ユニーク名は後で生成される
+                    data_type: param_type.clone(),
+                    scope_depth: analyzer.scope_depth,
+                    is_mutable: false,
+                });
+                typed_params.push((param_name.clone(), param_type.clone()));
+                param_types.push(param_type);
+            }
+
+            let typed_body = analyze_expr(analyzer, lambda_body)?;
+            analyzer.leave_scope();
+
+            let inferred_return_type = typed_body.data_type.clone();
+            let explicit_return_type = if let Some((type_name, type_span)) = raw_return_type {
+                Some(analyzer.string_to_type(type_name, *type_span)?)
+            } else {
+                None
+            };
+
+            let return_type = if let Some(explicit_type) = explicit_return_type {
+                if explicit_type != inferred_return_type {
+                    return Err(LangError::Compile(CompileError::new(
+                        format!(
+                            "Mismatched return type in lambda: expected '{}', but body returns '{}'",
+                            explicit_type, inferred_return_type
+                        ),
+                        typed_body.span,
+                    )));
+                }
+                explicit_type
+            } else {
+                inferred_return_type
+            };
+
+            let function_type = DataType::Function {
+                params: param_types,
+                return_type: Box::new(return_type.clone()),
+            };
+
+            Ok(TypedExpr {
+                kind: TypedExprKind::Lambda {
+                    params: typed_params,
+                    body: Box::new(typed_body),
+                },
+                data_type: function_type,
+                span: *span,
+            })
         }
         RawAstNode::Block { statements, span } => {
             analyzer.enter_scope();
@@ -647,6 +921,26 @@ fn analyze_sexp_from_slice<'a>(
                 data_type: expr_type,
                 span: *span,
             })
+        }
+        RawExprPart::MatchExpr { value, arms, span } => {
+            *parts = &parts[1..];
+            analyze_match_expr(analyzer, value, arms, *span)
+        }
+        RawExprPart::Lambda {
+            params: lambda_params,
+            body: lambda_body,
+            return_type: raw_return_type,
+            span,
+        } => {
+            *parts = &parts[1..]; // ラムダ式を消費
+            // RawAstNode::Lambda を構築し、analyze_expr に渡す
+            let raw_lambda_node = RawAstNode::Lambda {
+                params: lambda_params.clone(),
+                body: lambda_body.clone(),
+                return_type: raw_return_type.clone(),
+                span: *span,
+            };
+            analyze_expr(analyzer, &raw_lambda_node)
         }
         RawExprPart::TypeAnnotation(_, span) => Err(LangError::Compile(CompileError::new(
             "Type annotation must follow an expression",

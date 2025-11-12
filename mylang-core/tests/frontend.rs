@@ -112,7 +112,7 @@ fn passing_samples_match_metadata() {
     for sample in load_samples("passing") {
         match sample.metadata {
             SampleMetadata::Ok { functions, .. } => {
-                let analysis = analyze_source(&sample.source).unwrap_or_else(|err| {
+                let analysis = analyze_source(&sample.source, false).unwrap_or_else(|err| {
                     panic!("expected Ok for {}, got Err: {}", sample.name, err)
                 });
 
@@ -125,12 +125,17 @@ fn passing_samples_match_metadata() {
                     })
                     .collect();
 
-                assert_eq!(
-                    function_nodes.len(),
-                    functions.len(),
-                    "typed AST function count mismatch for {}",
-                    sample.name
-                );
+                // If the metadata explicitly lists functions, assert the count.
+                // If not provided (empty), skip the strict count check to allow
+                // both script-style samples and explicit `fn` definitions.
+                if !functions.is_empty() {
+                    assert_eq!(
+                        function_nodes.len(),
+                        functions.len(),
+                        "typed AST function count mismatch for {}",
+                        sample.name
+                    );
+                }
 
                 for func_meta in &functions {
                     let typed_node = function_nodes
@@ -206,7 +211,7 @@ fn failing_samples_match_metadata() {
             ),
         };
 
-        let err = match analyze_source(&sample.source) {
+        let err = match analyze_source(&sample.source, false) {
             Ok(_) => panic!("expected Err for {}", sample.name),
             Err(err) => err,
         };
@@ -291,5 +296,9 @@ fn data_type_to_str(data_type: &DataType) -> String {
             format!("({})", inner)
         }
         DataType::Struct(name) | DataType::Enum(name) => name.clone(),
+        DataType::Function { params, return_type } => {
+            let params_s = params.iter().map(data_type_to_str).collect::<Vec<_>>().join(", ");
+            format!("({}) -> {}", params_s, data_type_to_str(return_type))
+        }
     }
 }

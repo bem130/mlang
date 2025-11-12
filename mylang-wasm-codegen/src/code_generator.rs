@@ -230,6 +230,20 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
                     .push_str(&format!("    local.set ${}\n", name.1));
             }
         }
+        TypedExprKind::LetHoistBinding { name, value } => {
+            // For now, generate the same code as a normal let binding.
+            // Proper hoisting semantics (declare before evaluating value) will be
+            // implemented in the analyzer; here we emit code like a normal let.
+            generator
+                .wat_buffer
+                .push_str(&format!("    ;; LetHoist: {}\n", name.0));
+            generate_expr(generator, value)?;
+            if value.data_type != DataType::Unit {
+                generator
+                    .wat_buffer
+                    .push_str(&format!("    local.set ${}\n", name.1));
+            }
+        }
         TypedExprKind::Assignment { name, value } => {
             generator
                 .wat_buffer
@@ -292,6 +306,56 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
             generator.wat_buffer.push_str("        br 0\n");
             generator.wat_buffer.push_str("      end\n");
             generator.wat_buffer.push_str("    end\n");
+        }
+        TypedExprKind::Lambda { params, body } => {
+            generator.lambda_count += 1;
+            let lambda_name = format!("__lambda_{}", generator.lambda_count);
+
+            // ラムダ関数を生成するために、ジェネレータのメインバッファを一時的に退避
+            let original_buffer = core::mem::take(&mut generator.wat_buffer);
+
+            // --- 新しいバッファにラムダ関数を生成 ---
+            generator
+                .wat_buffer
+                .push_str(&format!("\n  ;; --- Lambda Function: {} ---\n", lambda_name));
+            generator
+                .wat_buffer
+                .push_str(&format!("  (func ${}", lambda_name));
+
+            for (param_name, param_type) in params {
+                generator.wat_buffer.push_str(&format!(
+                    " (param ${} {})",
+                    param_name,
+                    generator.type_to_wat(param_type)
+                ));
+            }
+
+            if node.data_type != DataType::Unit {
+                if let DataType::Function { return_type, .. } = &node.data_type {
+                    if **return_type != DataType::Unit {
+                        generator.wat_buffer.push_str(&format!(
+                            " (result {})",
+                            generator.type_to_wat(return_type)
+                        ));
+                    }
+                }
+            }
+            generator.wat_buffer.push_str("\n");
+
+            generator.clear_temp_state();
+            collect_and_declare_locals(generator, body);
+            generate_expr(generator, body)?;
+            generator.wat_buffer.push_str("  )\n");
+
+            // 生成したラムダコードを専用バッファに移動し、元のバッファを復元
+            let generated_lambda_code = core::mem::take(&mut generator.wat_buffer);
+            generator.wat_buffer = original_buffer;
+            generator.lambdas_buffer.push_str(&generated_lambda_code);
+
+            // ラムダ式を評価した結果（関数ポインタ）をスタックに積む
+            generator
+                .wat_buffer
+                .push_str("    i32.const 0 ;; Lambda function index (placeholder)\n");
         }
         TypedExprKind::TupleLiteral { elements } => {
             let tuple_types = match &node.data_type {
@@ -416,6 +480,7 @@ fn type_size_and_align(data_type: &DataType) -> (u32, u32) {
         | DataType::Tuple(_)
         | DataType::Struct(_)
         | DataType::Enum(_) => (4, 4),
+        DataType::Function { .. } => (4, 4),
         DataType::F64 => (8, 8),
         DataType::Unit => (0, 1),
     }
@@ -783,6 +848,8 @@ fn body_uses_print(expr: &TypedExpr) -> bool {
             }
             TypedExprKind::LetBinding { value, .. } => find_prints(value, uses),
             TypedExprKind::Assignment { value, .. } => find_prints(value, uses),
+            TypedExprKind::LetHoistBinding { value, .. } => find_prints(value, uses),
+            TypedExprKind::Lambda { body, .. } => find_prints(body, uses),
             TypedExprKind::IfExpr {
                 condition,
                 then_branch,
@@ -869,6 +936,14 @@ pub fn collect_and_declare_locals(generator: &mut WasmGenerator, typed_body: &Ty
             TypedExprKind::LetBinding { name, value, .. } => {
                 locals.insert(name.1.clone(), value.data_type.clone());
                 find_lets(generator, value, locals);
+            }
+            TypedExprKind::LetHoistBinding { name, value } => {
+                locals.insert(name.1.clone(), value.data_type.clone());
+                find_lets(generator, value, locals);
+            }
+            TypedExprKind::Lambda { .. } => {
+                // Do not traverse into lambda body for collecting function-level locals;
+                // lambda-local lets should be handled when generating the lambda body/function.
             }
             TypedExprKind::Assignment { value, .. } => {
                 find_lets(generator, value, locals);

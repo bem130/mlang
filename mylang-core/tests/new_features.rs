@@ -23,7 +23,7 @@ fn match_tuple(flag: bool) -> i32 {
 }
 "#;
 
-    let analysis = analyze_source(source).expect("analysis should succeed");
+    let analysis = analyze_source(source, true).expect("analysis should succeed");
     assert!(
         analysis
             .typed_ast
@@ -104,7 +104,7 @@ fn destructure(flag: bool) -> i32 {
 }
 "#;
 
-    let analysis = analyze_source(source).expect("analysis should succeed");
+    let analysis = analyze_source(source, true).expect("analysis should succeed");
 
     let function_body = analysis
         .typed_ast
@@ -169,7 +169,7 @@ fn choose(val: Toggle) -> i32 {
 }
 "#;
 
-    let err = match analyze_source(source) {
+    let err = match analyze_source(source, true) {
         Ok(_) => panic!("analysis should fail"),
         Err(err) => err,
     };
@@ -197,7 +197,7 @@ fn to_int(flag: bool) -> i32 {
 
 "#;
 
-    let err = match analyze_source(source) {
+    let err = match analyze_source(source, true) {
         Ok(_) => panic!("analysis should fail"),
         Err(err) => err,
     };
@@ -223,7 +223,7 @@ fn kind(x: i32) -> i32 {
 }
 "#;
 
-    let err = match analyze_source(source) {
+    let err = match analyze_source(source, true) {
         Ok(_) => panic!("analysis should fail"),
         Err(err) => err,
     };
@@ -250,7 +250,7 @@ fn evaluate(a: bool, b: bool, value: i32) -> bool {
 }
 "#;
 
-    let analysis = analyze_source(source).expect("analysis should succeed");
+    let analysis = analyze_source(source, true).expect("analysis should succeed");
     let function = analysis
         .typed_ast
         .iter()
@@ -330,7 +330,7 @@ fn use_vec() -> i32 {
 }
 "#;
 
-    let analysis = analyze_source(source).expect("analysis should succeed");
+    let analysis = analyze_source(source, true).expect("analysis should succeed");
     let function = analysis
         .typed_ast
         .iter()
@@ -379,7 +379,7 @@ fn third(text: string) -> string {
 }
 "#;
 
-    let analysis = analyze_source(source).expect("analysis should succeed");
+    let analysis = analyze_source(source, true).expect("analysis should succeed");
     let function = analysis
         .typed_ast
         .iter()

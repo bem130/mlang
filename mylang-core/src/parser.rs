@@ -3,11 +3,11 @@
 extern crate alloc;
 use crate::ast::*;
 use crate::error::{LangError, ParseError};
-use crate::span::{Span, combine_spans};
+use crate::span::{combine_spans, Span};
 use crate::token::Token;
 use alloc::boxed::Box;
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -29,29 +29,88 @@ impl Parser {
     pub fn parse_toplevel(&mut self) -> Result<Vec<RawAstNode>, LangError> {
         let mut nodes = Vec::new();
         while !self.is_at_end() {
-            match self.peek() {
-                Some(Token::Fn) => nodes.push(self.parse_fn_def()?),
-                Some(Token::Struct) => nodes.push(self.parse_struct_def()?),
-                Some(Token::Enum) => nodes.push(self.parse_enum_def()?),
-                _ => {
-                    return Err(ParseError::new(
-                        "Expected function definition at toplevel",
-                        self.peek_span(),
-                    )
-                    .into());
-                }
+            // 空の文 (;) をスキップする
+            while self.check_and_consume(Token::Semicolon) {}
+            if self.is_at_end() {
+                break;
             }
+            nodes.push(self.parse_statement()?);
         }
         Ok(nodes)
     }
 
-    /// 関数定義 `fn name(p1: t1, ...) -> type { ... }` をパースする
+    /// 関数定義 `fn name(p1: t1, ...) -> type { ... }` または `fn name |p1, p2| expr : type` をパースする
+    /// 後者は `let hoist` に脱糖される（新構文）。前者は従来のFnDef（後方互換）。
     fn parse_fn_def(&mut self) -> Result<RawAstNode, LangError> {
         let start_span = self.consume(Token::Fn)?.1;
 
         let name_token = self.consume_identifier()?;
         let name = (name_token.0.clone(), name_token.1);
 
+        // 新構文: fn name |params| body : type を let hoist に脱糖する
+        // | または || で始まるかをチェック
+        if self.peek() == Some(&Token::Pipe) || self.peek() == Some(&Token::OrOr) {
+            let mut lambda_params = Vec::new();
+
+            // || の場合は空引数リストとして確定
+            if self.check_and_consume(Token::OrOr) {
+                // `||` を消費したのでパラメータパースはスキップ
+            } else {
+                // `|` の場合
+                self.consume(Token::Pipe)?; // consume first |
+
+                // パラメータをパース (lambda形式)
+                if self.peek() != Some(&Token::Pipe) {
+                    loop {
+                        let (param_name, param_span) = self.consume_identifier()?;
+                        let param_type = if self.check_and_consume(Token::Colon) {
+                            Some(self.parse_type()?)
+                        } else {
+                            None
+                        };
+                        lambda_params.push(((param_name, param_span), param_type));
+
+                        if !self.check_and_consume(Token::Comma) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(Token::Pipe)?; // consume closing |
+            }
+
+            // ラムダボディをパース
+            let body = self.parse_sexpression()?;
+
+            // 型注釈をパース (オプショナル)
+            let return_type = if self.check_and_consume(Token::Colon) {
+                let type_token = self.parse_type()?;
+                Some((type_token.0.clone(), type_token.1))
+            } else {
+                None
+            };
+
+            let end_span = body.span();
+
+            // ラムダ式をRawExprPartとして構築
+            let lambda_expr = RawExprPart::Lambda {
+                params: lambda_params,
+                body: Box::new(body),
+                return_type,
+                span: combine_spans(start_span, end_span),
+            };
+
+            // let hoist に脱糖: let hoist name <lambda> : type
+            // セミコロンをオプショナルで消費（新構文では式の後に ; が来る可能性）
+            self.check_and_consume(Token::Semicolon);
+
+            return Ok(RawAstNode::LetHoist {
+                name: name,
+                value: Box::new(RawAstNode::Expr(vec![lambda_expr])),
+                span: combine_spans(start_span, end_span),
+            });
+        }
+
+        // 旧構文: fn name(p1: t1, ...) -> type { ... }
         // 【修正点】関数定義の `(` は LParen と CallLParen の両方を許容する
         if self.peek() == Some(&Token::LParen) {
             self.consume(Token::LParen)?;
@@ -65,7 +124,7 @@ impl Parser {
             loop {
                 let (param_name, param_span) = self.consume_identifier()?;
                 self.consume(Token::Colon)?;
-                let (type_name, type_span) = self.parse_type_name()?;
+                let (type_name, type_span) = self.parse_type()?;
                 params.push(((param_name, param_span), (type_name, type_span)));
 
                 if !self.check_and_consume(Token::Comma) {
@@ -78,7 +137,7 @@ impl Parser {
 
         // 戻り値の型 (オプショナル)
         let return_type = if self.check_and_consume(Token::Arrow) {
-            let type_token = self.parse_type_name()?;
+            let type_token = self.parse_type()?;
             Some((type_token.0.clone(), type_token.1))
         } else {
             None
@@ -87,6 +146,7 @@ impl Parser {
         let body = self.parse_block()?;
         let end_span = body.span();
 
+        // 旧構文で返す
         Ok(RawAstNode::FnDef {
             name,
             params,
@@ -105,7 +165,7 @@ impl Parser {
         while self.peek() != Some(&Token::RBrace) {
             let (field_name, field_span) = self.consume_identifier()?;
             self.consume(Token::Colon)?;
-            let (type_name, type_span) = self.parse_type_name()?;
+            let (type_name, type_span) = self.parse_type()?;
             fields.push(RawStructField {
                 name: (field_name, field_span),
                 type_name: (type_name, type_span),
@@ -144,7 +204,7 @@ impl Parser {
                 let mut fields = Vec::new();
                 if self.peek() != Some(&Token::RParen) {
                     loop {
-                        let (type_name, type_span) = self.parse_type_name()?;
+                        let (type_name, type_span) = self.parse_type()?;
                         fields.push((type_name, type_span));
                         if !self.check_and_consume(Token::Comma) {
                             break;
@@ -224,110 +284,94 @@ impl Parser {
     /// 1つの文 (`let`, `{}` または 式) をパースする
     fn parse_statement(&mut self) -> Result<RawAstNode, LangError> {
         match self.peek() {
-            Some(Token::Let) => self.parse_let_def(),
-            Some(Token::While) => self.parse_while_loop(),
-            Some(Token::Identifier(_)) if self.peek_n(1) == Some(&Token::Equals) => {
-                self.parse_assignment()
+            Some(Token::Let) => {
+                let start_span = self.consume(Token::Let)?.1;
+                if self.check_and_consume(Token::Mut) {
+                    // let mut
+                    self.parse_let_mut_binding(start_span)
+                } else if self.check_and_consume(Token::Hoist) {
+                    // let hoist
+                    self.parse_let_hoist_binding(start_span)
+                } else {
+                    // let
+                    self.parse_let_binding(start_span)
+                }
             }
-            _ => self.parse_expression(),
+            Some(Token::Set) => self.parse_set_assignment(),
+            Some(Token::While) => self.parse_while_loop(),
+            Some(Token::Fn) => self.parse_fn_def(),
+            Some(Token::Struct) => self.parse_struct_def(),
+            Some(Token::Enum) => self.parse_enum_def(),
+            _ => self.parse_sexpression(),
         }
     }
 
-    /// let束縛 `let name = ...` をパースする
-    fn parse_let_def(&mut self) -> Result<RawAstNode, LangError> {
-        let start_span = self.consume(Token::Let)?.1;
-        let is_mutable = if self.peek() == Some(&Token::Mut) {
-            self.advance();
-            true
-        } else {
-            false
-        };
+    /// let束縛 `let name ...` をパースする
+    fn parse_let_binding(&mut self, start_span: Span) -> Result<RawAstNode, LangError> {
         let (name, name_span) = self.consume_identifier()?;
-        self.consume(Token::Equals)?;
 
-        let value = self.parse_expression()?;
+        let value = self.parse_sexpression()?;
         let end_span = value.span();
 
-        Ok(RawAstNode::LetDef {
+        Ok(RawAstNode::Let {
             name: (name, name_span),
             value: Box::new(value),
-            is_mutable,
             span: combine_spans(start_span, end_span),
         })
     }
 
-    /// 代入文 `name = expr` をパースする
-    fn parse_assignment(&mut self) -> Result<RawAstNode, LangError> {
+    /// let mut束縛 `let mut name ...` をパースする
+    fn parse_let_mut_binding(&mut self, start_span: Span) -> Result<RawAstNode, LangError> {
         let (name, name_span) = self.consume_identifier()?;
-        self.consume(Token::Equals)?;
-        let value = self.parse_expression()?;
+
+        let value = self.parse_sexpression()?;
         let end_span = value.span();
 
-        Ok(RawAstNode::Assignment {
+        Ok(RawAstNode::LetMut {
             name: (name, name_span),
             value: Box::new(value),
-            span: combine_spans(name_span, end_span),
+            span: combine_spans(start_span, end_span),
         })
     }
 
-    /// 式をパースする
-    fn parse_expression(&mut self) -> Result<RawAstNode, LangError> {
-        if self.peek() == Some(&Token::LBrace) {
-            self.parse_block()
-        } else if self.peek() == Some(&Token::While) {
-            self.parse_while_loop()
-        } else if self.peek() == Some(&Token::Match) {
-            self.parse_match_expression()
-        } else {
-            self.parse_sexpression()
-        }
+    /// let hoist束縛 `let hoist name ...` をパースする
+    fn parse_let_hoist_binding(&mut self, start_span: Span) -> Result<RawAstNode, LangError> {
+        let (name, name_span) = self.consume_identifier()?;
+
+        let value = self.parse_sexpression()?;
+        let end_span = value.span();
+
+        Ok(RawAstNode::LetHoist {
+            name: (name, name_span),
+            value: Box::new(value),
+            span: combine_spans(start_span, end_span),
+        })
+    }
+
+    /// 代入文 `set name expr` をパースする
+    fn parse_set_assignment(&mut self) -> Result<RawAstNode, LangError> {
+        let start_span = self.consume(Token::Set)?.1;
+        let (name, name_span) = self.consume_identifier()?;
+        let value = self.parse_sexpression()?;
+        let end_span = value.span();
+
+        Ok(RawAstNode::Set {
+            name: (name, name_span),
+            value: Box::new(value),
+            span: combine_spans(start_span, end_span),
+        })
     }
 
     /// `while <condition> { ... }` をパースする
     fn parse_while_loop(&mut self) -> Result<RawAstNode, LangError> {
         let start_span = self.consume(Token::While)?.1;
-        let condition = self.parse_expression()?;
+        let condition = self.parse_sexpression()?;
         let body = self.parse_block()?;
         let end_span = body.span();
 
         Ok(RawAstNode::While {
             condition: Box::new(condition),
             body: Box::new(body),
-            span: combine_spans(start_span, end_span),
-        })
-    }
-
-    fn parse_match_expression(&mut self) -> Result<RawAstNode, LangError> {
-        let start_span = self.consume(Token::Match)?.1;
-        let value = self.parse_expression()?;
-        self.consume(Token::LBrace)?;
-
-        let mut arms = Vec::new();
-        while self.peek() != Some(&Token::RBrace) {
-            let pattern = self.parse_pattern()?;
-            self.consume(Token::FatArrow)?;
-            let body = self.parse_expression()?;
-            let arm_span = combine_spans(pattern.span(), body.span());
-            arms.push(RawMatchArm {
-                pattern,
-                body: Box::new(body),
-                span: arm_span,
-            });
-
-            if !self.check_and_consume(Token::Comma) {
-                break;
-            }
-        }
-
-        while self.peek() == Some(&Token::Comma) {
-            self.advance();
-        }
-
-        let end_span = self.consume(Token::RBrace)?.1;
-
-        Ok(RawAstNode::Match {
-            value: Box::new(value),
-            arms,
             span: combine_spans(start_span, end_span),
         })
     }
@@ -475,12 +519,8 @@ impl Parser {
             Token::LParen => self.parse_s_expr_group(),
             Token::Colon => self.parse_type_annotation(),
             Token::If => self.parse_if_as_part(),
-            // CallLParenは `parse_sexpression` の中で処理されるため、ここに来たらエラー
-            Token::CallLParen => Err(ParseError::new(
-                "Unexpected token: C-style parenthesis cannot start an expression part.",
-                *span,
-            )
-            .into()),
+            Token::Pipe => self.parse_lambda_expression(),
+            Token::Match => self.parse_match_as_part(),
             _ => Err(ParseError::new(
                 format!("Unexpected token in expression: {:?}", token),
                 *span,
@@ -489,10 +529,87 @@ impl Parser {
         }
     }
 
+    /// `match`式を`RawExprPart`としてパースする
+    fn parse_match_as_part(&mut self) -> Result<RawExprPart, LangError> {
+        let start_span = self.consume(Token::Match)?.1;
+        let value = self.parse_sexpression()?;
+        self.consume(Token::LBrace)?;
+
+        let mut arms = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let pattern = self.parse_pattern()?;
+            self.consume(Token::FatArrow)?;
+            let body = self.parse_sexpression()?;
+            let arm_span = combine_spans(pattern.span(), body.span());
+            arms.push(RawMatchArm {
+                pattern,
+                body: Box::new(body),
+                span: arm_span,
+            });
+
+            if !self.check_and_consume(Token::Comma) {
+                break;
+            }
+        }
+
+        while self.peek() == Some(&Token::Comma) {
+            self.advance();
+        }
+
+        let end_span = self.consume(Token::RBrace)?.1;
+
+        Ok(RawExprPart::MatchExpr {
+            value: Box::new(value),
+            arms,
+            span: combine_spans(start_span, end_span),
+        })
+    }
+
+    /// ラムダ式 `|arg1, arg2| body : (type) -> type` をパースする
+    fn parse_lambda_expression(&mut self) -> Result<RawExprPart, LangError> {
+        let start_span = self.consume(Token::Pipe)?.1;
+
+        // パラメータをパース (lambda形式)
+        let mut params = Vec::new();
+        if self.peek() != Some(&Token::Pipe) {
+            loop {
+                let (param_name, param_span) = self.consume_identifier()?;
+                let param_type = if self.check_and_consume(Token::Colon) {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                params.push(((param_name, param_span), param_type));
+                if !self.check_and_consume(Token::Comma) {
+                    break;
+                }
+            }
+        }
+        self.consume(Token::Pipe)?;
+
+        let body = self.parse_sexpression()?;
+
+        let return_type = if self.check_and_consume(Token::Colon) {
+            let type_token = self.parse_type()?;
+            Some((type_token.0.clone(), type_token.1))
+        } else {
+            None
+        };
+
+        let end_span = body.span();
+
+        Ok(RawExprPart::Lambda {
+            params,
+            body: Box::new(body),
+            return_type,
+            span: combine_spans(start_span, end_span),
+        })
+    }
+
     /// S式の一部として `if <cond> { ... } else { ... }` をパースする
     fn parse_if_as_part(&mut self) -> Result<RawExprPart, LangError> {
         let start_span = self.consume(Token::If)?.1;
-        let condition = self.parse_expression()?;
+        let condition = self.parse_sexpression()?;
         let then_branch = self.parse_block()?;
 
         let else_branch = if self.check_and_consume(Token::Else) {
@@ -501,7 +618,7 @@ impl Parser {
             if self.peek() == Some(&Token::LBrace) {
                 self.parse_block()?
             } else {
-                self.parse_expression()?
+                self.parse_sexpression()?
             }
         } else {
             // elseがない場合、Unitを返す空のブロックを生成する
@@ -525,11 +642,56 @@ impl Parser {
     /// `: type` 型注釈をパースする
     fn parse_type_annotation(&mut self) -> Result<RawExprPart, LangError> {
         self.consume(Token::Colon)?;
-        let (type_name, type_span) = self.parse_type_name()?;
+        let (type_name, type_span) = self.parse_type()?;
         Ok(RawExprPart::TypeAnnotation(type_name, type_span))
     }
 
-    fn parse_type_name(&mut self) -> Result<(String, Span), LangError> {
+    /// 型シグネチャをパースする。単純な型、ジェネリクス、関数型を扱える。
+    fn parse_type(&mut self) -> Result<(String, Span), LangError> {
+        let (start_token, start_span) = self
+            .peek_full()
+            .cloned()
+            .ok_or_else(|| ParseError::new("Expected a type", self.peek_span()))?;
+
+        // 関数型: (T1, T2) -> R
+        if start_token == Token::LParen {
+            self.consume(Token::LParen)?;
+            let mut signature = "(".to_string();
+
+            // パラメータ型をパース
+            let mut first = true;
+            if self.peek() != Some(&Token::RParen) {
+                loop {
+                    if !first {
+                        signature.push_str(", ");
+                    }
+                    // 再帰呼び出し
+                    let (param_type, _) = self.parse_type()?;
+                    signature.push_str(&param_type);
+                    first = false;
+                    if !self.check_and_consume(Token::Comma) {
+                        break;
+                    }
+                }
+            }
+            self.consume(Token::RParen)?;
+            signature.push(')');
+
+            if self.peek() == Some(&Token::Arrow) {
+                self.consume(Token::Arrow)?;
+                signature.push_str(" -> ");
+
+                // 戻り値の型をパース
+                let (return_type, end_span) = self.parse_type()?;
+                signature.push_str(&return_type);
+                return Ok((signature, combine_spans(start_span, end_span)));
+            } else {
+                let end_span = self.peek_span();
+                return Ok((signature, combine_spans(start_span, end_span)));
+            }
+        }
+
+        // 単純な型またはジェネリクス型: i32, Vec<i32>
         let (base_name, base_span) = self.consume_identifier()?;
         let mut name = base_name.clone();
         let mut end_span = base_span;
@@ -539,9 +701,10 @@ impl Parser {
             name.push('<');
             let mut first = true;
             loop {
-                let (inner_name, _inner_span) = self.parse_type_name()?;
+                // ジェネリクスパラメータをパース
+                let (inner_name, _inner_span) = self.parse_type()?;
                 if !first {
-                    name.push(',');
+                    name.push_str(", ");
                 }
                 name.push_str(&inner_name);
                 first = false;
@@ -639,6 +802,7 @@ impl Parser {
         let mut left = {
             let (token, span) = self
                 .peek_full()
+                .cloned()
                 .ok_or_else(|| {
                     ParseError::new("Unexpected end of math expression", self.peek_span())
                 })?
@@ -698,6 +862,7 @@ impl Parser {
         // Infix (中置演算子)
         while precedence < self.get_infix_precedence(&self.peek()) {
             let (op_token, _op_span) = self.advance();
+
             let op_prec = self.get_token_precedence(&op_token);
             let right = self.parse_math_expression(op_prec)?;
             let combined_span = combine_spans(left.span(), right.span());
@@ -777,9 +942,6 @@ impl Parser {
     }
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.position).map(|(t, _)| t)
-    }
-    fn peek_n(&self, offset: usize) -> Option<&Token> {
-        self.tokens.get(self.position + offset).map(|(t, _)| t)
     }
     fn peek_span(&self) -> Span {
         self.tokens

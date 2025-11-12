@@ -137,7 +137,7 @@ impl StepRunner {
 }
 
 fn generate_wat(source: &str) -> Result<String, String> {
-    let analysis_result = analyze_source(source.trim()).map_err(|e| e.to_string())?;
+    let analysis_result = analyze_source(source.trim(),false).map_err(|e| e.to_string())?;
 
     let mut wasm_generator = WasmGenerator::new(
         analysis_result.function_table,

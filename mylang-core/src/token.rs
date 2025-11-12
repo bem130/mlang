@@ -9,6 +9,8 @@ pub enum Token {
     Fn,
     Let,
     Mut,
+    Hoist,
+    Set,
     If,
     Else,
     While,
@@ -30,6 +32,7 @@ pub enum Token {
     RParen,      // )
     LBrace,      // {
     RBrace,      // }
+    Pipe,        // | (ラムダ式用)
     Dollar,      // $
     Colon,       // :
     DoubleColon, // ::
@@ -67,6 +70,8 @@ impl Token {
             "fn" => Some(Token::Fn),
             "let" => Some(Token::Let),
             "mut" => Some(Token::Mut),
+            "hoist" => Some(Token::Hoist),
+            "set" => Some(Token::Set),
             "if" => Some(Token::If),
             "else" => Some(Token::Else),
             "while" => Some(Token::While),
