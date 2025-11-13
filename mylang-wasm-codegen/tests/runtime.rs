@@ -305,8 +305,8 @@ fn load_samples(subdir: &str) -> Vec<SampleCase> {
 #[test]
 fn nested_tuple_patterns_execute_correctly() {
     let source = r#"
-fn main() {
-    let total = match (1, (2, 3)) {
+fn main ||->() {
+    let total match (1, (2, 3)) {
         (a, (b, c)) => $a + b + c$,
     };
     println(i32_to_string(total));

@@ -48,6 +48,6 @@ let result calculate_sum_recursive(limit, 1, 0);
 
 // 結果の出力
 let msg1 string_concat("The sum of all the multiples of 3 or 5 below ", i32_to_string(limit));
-let msg2 string_concat(msg1, ", is: ");
+let msg2 string_concat(msg1, " is: ");
 println(string_concat(msg2, i32_to_string(result)));
 // 期待される結果: 233168
