@@ -1,0 +1,5 @@
+name = "mylang"
+scope = "source.mlang"
+file_types = ["mlang"]
+comment_line = "//"
+indent = { tab_width = 4, unit = "    " }

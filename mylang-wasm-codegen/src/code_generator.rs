@@ -230,7 +230,7 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
                     .push_str(&format!("    local.set ${}\n", name.1));
             }
         }
-        TypedExprKind::LetHoistBinding { name, value } => {
+        TypedExprKind::LetHoistBinding { name, value, .. } => {
             // For now, generate the same code as a normal let binding.
             // Proper hoisting semantics (declare before evaluating value) will be
             // implemented in the analyzer; here we emit code like a normal let.
@@ -315,9 +315,10 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
             let original_buffer = core::mem::take(&mut generator.wat_buffer);
 
             // --- 新しいバッファにラムダ関数を生成 ---
-            generator
-                .wat_buffer
-                .push_str(&format!("\n  ;; --- Lambda Function: {} ---\n", lambda_name));
+            generator.wat_buffer.push_str(&format!(
+                "\n  ;; --- Lambda Function: {} ---\n",
+                lambda_name
+            ));
             generator
                 .wat_buffer
                 .push_str(&format!("  (func ${}", lambda_name));
@@ -333,10 +334,9 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
             if node.data_type != DataType::Unit {
                 if let DataType::Function { return_type, .. } = &node.data_type {
                     if **return_type != DataType::Unit {
-                        generator.wat_buffer.push_str(&format!(
-                            " (result {})",
-                            generator.type_to_wat(return_type)
-                        ));
+                        generator
+                            .wat_buffer
+                            .push_str(&format!(" (result {})", generator.type_to_wat(return_type)));
                     }
                 }
             }
@@ -937,7 +937,7 @@ pub fn collect_and_declare_locals(generator: &mut WasmGenerator, typed_body: &Ty
                 locals.insert(name.1.clone(), value.data_type.clone());
                 find_lets(generator, value, locals);
             }
-            TypedExprKind::LetHoistBinding { name, value } => {
+            TypedExprKind::LetHoistBinding { name, value, .. } => {
                 locals.insert(name.1.clone(), value.data_type.clone());
                 find_lets(generator, value, locals);
             }

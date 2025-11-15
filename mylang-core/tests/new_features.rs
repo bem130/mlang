@@ -1,5 +1,4 @@
 use mylang_core::analyze_source;
-use mylang_core::ast::{DataType, TypedAstNode, TypedExprKind, TypedPattern};
 use mylang_core::error::LangError;
 
 // 新仕様に合わせてテストを書き直す必要あり

@@ -180,7 +180,12 @@ impl Analyzer {
 
         // 次に let hoist 束縛（関数定義）を収集する
         for node in ast {
-            if let RawAstNode::LetHoist { name, value, span } = node {
+            if let RawAstNode::LetHoist {
+                name,
+                value,
+                span: _,
+            } = node
+            {
                 if let RawAstNode::Lambda {
                     params,
                     return_type,
@@ -206,7 +211,7 @@ impl Analyzer {
                         FunctionSignature {
                             param_types,
                             return_type: ret_type,
-                            definition_span: *span,
+                            definition_span: name.1,
                         },
                     );
                 }

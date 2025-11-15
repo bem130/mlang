@@ -248,10 +248,12 @@ pub enum TypedExprKind {
         name: (String, String),
         value: Box<TypedExpr>,
         is_mutable: bool,
+        name_span: Span,
     },
     LetHoistBinding {
         name: (String, String),
         value: Box<TypedExpr>,
+        name_span: Span,
     },
     Assignment {
         name: (String, String),
