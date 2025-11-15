@@ -1,0 +1,7 @@
+namespace auth {
+    let secret 42;
+
+    pub fn expose_secret ||->i32 {
+        secret
+    };
+}

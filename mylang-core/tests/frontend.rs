@@ -3,6 +3,7 @@ use mylang_core::ast::{DataType, TypedAstNode};
 use mylang_core::compiler::FunctionSignature;
 use mylang_core::error::LangError;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -50,6 +51,23 @@ struct SampleCase {
     metadata: SampleMetadata,
 }
 
+#[derive(Debug)]
+#[allow(dead_code)]
+struct MultiFileSampleCase {
+    name: String,
+    root: PathBuf,
+    entry: PathBuf,
+    files: Vec<(PathBuf, String)>,
+    metadata: SampleMetadata,
+}
+
+#[derive(Debug, Deserialize)]
+struct MultiFileMetadata {
+    entry: String,
+    #[serde(flatten)]
+    metadata: SampleMetadata,
+}
+
 fn samples_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -64,7 +82,9 @@ fn load_samples(subdir: &str) -> Vec<SampleCase> {
     let mut entries: Vec<_> = fs::read_dir(&dir)
         .unwrap_or_else(|err| panic!("failed to read {:?}: {}", dir, err))
         .filter_map(|entry| {
-            let entry = entry.ok()?;
+            let entry = entry.unwrap_or_else(|err| {
+                panic!("failed to read directory entry in {:?}: {}", dir, err)
+            });
             let path = entry.path();
             if path.extension().map_or(false, |ext| ext == "mlang") {
                 Some(path)
@@ -105,6 +125,98 @@ fn load_samples(subdir: &str) -> Vec<SampleCase> {
             }
         })
         .collect()
+}
+
+fn multi_file_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("tests")
+        .join("multi_file")
+}
+
+fn load_multi_file_samples(subdir: &str) -> Vec<MultiFileSampleCase> {
+    let mut dir = multi_file_root();
+    dir.push(subdir);
+
+    let mut entries: Vec<_> = fs::read_dir(&dir)
+        .unwrap_or_else(|err| panic!("failed to read {:?}: {}", dir, err))
+        .filter_map(|entry| {
+            let entry = entry.unwrap_or_else(|err| {
+                panic!("failed to read directory entry in {:?}: {}", dir, err)
+            });
+            let path = entry.path();
+            if path.is_dir() {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
+    entries.sort();
+
+    entries
+        .into_iter()
+        .map(|path| {
+            let metadata_path = path.join("case.meta.json");
+            let metadata_str = fs::read_to_string(&metadata_path).unwrap_or_else(|err| {
+                panic!(
+                    "failed to read metadata for {:?}: {}",
+                    path.file_name().unwrap(),
+                    err
+                )
+            });
+            let metadata: MultiFileMetadata = serde_json::from_str(&metadata_str).unwrap_or_else(|err| {
+                panic!(
+                    "failed to parse metadata JSON for {:?}: {}",
+                    metadata_path, err
+                )
+            });
+
+            let files = collect_mlang_sources(&path);
+
+            MultiFileSampleCase {
+                name: path
+                    .file_name()
+                    .map(|os| os.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string()),
+                root: path,
+                entry: PathBuf::from(metadata.entry),
+                files,
+                metadata: metadata.metadata,
+            }
+        })
+        .collect()
+}
+
+fn collect_mlang_sources(root: &Path) -> Vec<(PathBuf, String)> {
+    let mut stack = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).unwrap_or_else(|err| {
+            panic!("failed to read directory {:?}: {}", dir, err)
+        }) {
+            let entry = entry.unwrap_or_else(|err| {
+                panic!("failed to read directory entry in {:?}: {}", dir, err)
+            });
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().map_or(false, |ext| ext == "mlang") {
+                let rel_path = path
+                    .strip_prefix(root)
+                    .unwrap_or_else(|_| panic!("failed to strip prefix for {:?}", path))
+                    .to_path_buf();
+                let source = fs::read_to_string(&path).unwrap_or_else(|err| {
+                    panic!("failed to read {:?}: {}", path, err)
+                });
+                files.push((rel_path, source));
+            }
+        }
+    }
+
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files
 }
 
 #[test]
@@ -256,6 +368,68 @@ fn failing_samples_match_metadata() {
             }
         }
     }
+}
+
+#[test]
+fn multi_file_sample_layout_is_consistent() {
+    let passing = load_multi_file_samples("passing");
+    let failing = load_multi_file_samples("failing");
+
+    assert!(
+        !passing.is_empty(),
+        "expected at least one multi-file passing sample"
+    );
+    assert!(
+        !failing.is_empty(),
+        "expected at least one multi-file failing sample"
+    );
+
+    for sample in passing.into_iter().chain(failing.into_iter()) {
+        assert!(
+            !sample.entry.is_absolute(),
+            "entry path must be relative for {}",
+            sample.name
+        );
+
+        assert!(
+            !sample.files.is_empty(),
+            "no source files collected for multi-file sample {}",
+            sample.name
+        );
+
+        let mut seen_paths: HashSet<&Path> = HashSet::new();
+        let mut has_entry = false;
+        for (rel_path, _) in &sample.files {
+            has_entry |= rel_path == &sample.entry;
+            assert!(
+                seen_paths.insert(rel_path.as_path()),
+                "duplicate source {:?} found while loading sample {}",
+                rel_path,
+                sample.name
+            );
+        }
+
+        assert!(
+            has_entry,
+            "entry file {:?} missing from multi-file sample {}",
+            sample.entry,
+            sample.name
+        );
+    }
+}
+
+#[test]
+#[ignore = "multi-file include/import analysis not implemented yet"]
+fn multi_file_samples_match_metadata() {
+    let passing = load_multi_file_samples("passing");
+    let failing = load_multi_file_samples("failing");
+
+    assert!(
+        !passing.is_empty() || !failing.is_empty(),
+        "expected multi-file samples to be present"
+    );
+
+    todo!("integrate multi-file analysis pipeline");
 }
 
 fn assert_function_signature_matches(

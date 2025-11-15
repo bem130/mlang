@@ -1,0 +1,8 @@
+{
+  "entry": "main.mlang",
+  "expect": "ok",
+  "functions": [
+    {"name": "auth::expose_secret", "params": [], "return_type": "i32"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "entry": "main.mlang",
+  "expect": "ok",
+  "functions": [
+    {"name": "base_answer", "params": [], "return_type": "i32"},
+    {"name": "double_answer", "params": [], "return_type": "i32"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ]
+}

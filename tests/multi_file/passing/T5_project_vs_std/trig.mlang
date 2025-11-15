@@ -1,0 +1,1 @@
+fn sin |value: f64|->f64 $value$;

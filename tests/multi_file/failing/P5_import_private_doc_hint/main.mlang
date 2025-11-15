@@ -1,0 +1,5 @@
+import std::math;
+
+fn main ||->() {
+    println(f64_to_string(std::math::cos_impl(0.0)));
+};
