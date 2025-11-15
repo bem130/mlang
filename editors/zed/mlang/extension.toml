@@ -1,0 +1,15 @@
+id = "mlang"
+name = "mylang"
+description = "Language support for the mylang programming language"
+version = "0.1.0"
+schema_version = 1
+
+[language_servers.mylang]
+command = ["mylang-lsp", "--stdio"]
+languages = ["mylang"]
+
+[languages.mylang]
+name = "mylang"
+scope = "source.mlang"
+file_types = ["mlang"]
+comment_line = "//"

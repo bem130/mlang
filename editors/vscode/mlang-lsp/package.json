@@ -1,0 +1,45 @@
+{
+  "name": "mylang-lsp",
+  "displayName": "mylang Language Support",
+  "description": "Language support for the mylang programming language",
+  "version": "0.1.0",
+  "publisher": "mlang",
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "activationEvents": [
+    "onLanguage:mlang"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "mlang",
+        "aliases": ["mylang"],
+        "extensions": [".mlang"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "mlang",
+        "scopeName": "source.mlang",
+        "path": "./syntaxes/mlang.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "mylang",
+      "properties": {
+        "mylang.languageServerPath": {
+          "type": "string",
+          "default": "mylang-lsp",
+          "description": "Path to the mylang language server executable."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

@@ -47,6 +47,21 @@ The core language crates ship with unit tests. Run them all with:
 cargo test
 ```
 
+### Language server support
+
+An experimental Language Server Protocol (LSP) implementation is available in the
+`mylang-lsp` crate. It provides diagnostics, go-to-definition, hover tooltips,
+signature help, and semantic highlighting. Start the server with:
+
+```bash
+cargo run -p mylang-lsp -- --stdio
+```
+
+Editors can communicate with the server over standard input/output. A Visual
+Studio Code extension is provided in `editors/vscode/mlang-lsp` and a Zed
+extension in `editors/zed/mlang`. Configure the extension settings to point to
+the `mylang-lsp` executable if it is not available in your `PATH`.
+
 If you change the playground frontend you can run the UI checks with:
 
 ```bash
