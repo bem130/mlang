@@ -1,0 +1,8 @@
+{
+  "entry": "main.mlang",
+  "expect": "ok",
+  "functions": [
+    {"name": "local_identity", "params": ["f64"], "return_type": "f64"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ]
+}

@@ -1,0 +1,7 @@
+import std::math;
+use std::math::cos as cosine;
+
+fn main ||->() {
+    let result cosine(0.0);
+    println(f64_to_string(result));
+};

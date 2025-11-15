@@ -1,0 +1,8 @@
+{
+  "entry": "main.mlang",
+  "expect": "ok",
+  "functions": [
+    {"name": "sin", "params": ["f64"], "return_type": "f64"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ]
+}

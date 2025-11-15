@@ -1,0 +1,4 @@
+namespace auth {
+    let secret "token";
+    pub let public_key "public";
+}

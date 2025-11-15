@@ -1,0 +1,9 @@
+include "project/trig.mlang";
+import std::math;
+use std::math::sin;
+use project::trig::sin;
+
+fn main ||->() {
+    let value sin(0.0);
+    println(f64_to_string(value));
+};

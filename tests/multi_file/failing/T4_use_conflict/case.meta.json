@@ -1,0 +1,12 @@
+{
+  "entry": "main.mlang",
+  "expect": "error",
+  "error": {
+    "variant": "compile",
+    "message_contains": "use による導入が衝突"
+  },
+  "notes_contains": [
+    "std::math::sin",
+    "project::trig::sin"
+  ]
+}

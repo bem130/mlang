@@ -1,0 +1,11 @@
+{
+  "entry": "main.mlang",
+  "expect": "error",
+  "error": {
+    "variant": "compile",
+    "message_contains": "循環 include を検出しました"
+  },
+  "notes_contains": [
+    "経路: main.mlang → a.mlang → main.mlang"
+  ]
+}

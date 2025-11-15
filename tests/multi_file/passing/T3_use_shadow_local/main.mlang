@@ -1,0 +1,13 @@
+import std::math;
+use std::math::sin;
+
+fn local_identity |value: f64|->f64 {
+    let sin |inner: f64|->f64 $inner$;
+    sin(value)
+};
+
+fn main ||->() {
+    let result local_identity(1.0);
+    let from_import std::math::sin(0.0);
+    println(f64_to_string(result + from_import));
+};
