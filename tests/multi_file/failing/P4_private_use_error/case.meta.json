@@ -1,0 +1,11 @@
+{
+  "entry": "main.mlang",
+  "expect": "error",
+  "error": {
+    "variant": "compile",
+    "message_contains": "use は private シンボルを導入できません"
+  },
+  "notes_contains": [
+    "auth::secret"
+  ]
+}

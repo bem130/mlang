@@ -1,0 +1,8 @@
+{
+  "entry": "main.mlang",
+  "expect": "ok",
+  "functions": [
+    {"name": "math::public_pi", "params": [], "return_type": "f64"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ]
+}

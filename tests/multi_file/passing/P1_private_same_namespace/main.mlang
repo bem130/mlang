@@ -1,0 +1,6 @@
+include "auth/session.mlang";
+
+fn main ||->() {
+    let value auth::expose_secret();
+    println(i32_to_string(value));
+};

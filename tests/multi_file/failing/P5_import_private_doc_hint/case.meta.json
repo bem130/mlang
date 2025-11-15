@@ -1,0 +1,11 @@
+{
+  "entry": "main.mlang",
+  "expect": "error",
+  "error": {
+    "variant": "compile",
+    "message_contains": "`std::math::cos_impl` はライブラリ `std::math` の private シンボルです"
+  },
+  "notes_contains": [
+    "公開されている API については `std::math` のドキュメントを参照してください"
+  ]
+}

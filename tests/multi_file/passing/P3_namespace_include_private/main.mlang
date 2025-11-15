@@ -1,0 +1,5 @@
+include "math/module.mlang";
+
+fn main ||->() {
+    println(f64_to_string(math::public_pi()));
+};

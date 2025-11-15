@@ -1,0 +1,6 @@
+include "module.mlang";
+use auth::secret;
+
+fn main ||->() {
+    println(secret);
+};

@@ -1,0 +1,9 @@
+include "trig.mlang";
+import std::math;
+use std::math::sin as std_sin;
+
+fn main ||->() {
+    let local sin(0.0);
+    let library std_sin(0.0);
+    println(f64_to_string(local + library));
+};

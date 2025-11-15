@@ -1,0 +1,7 @@
+namespace math {
+    include "constants.mlang";
+
+    pub fn public_pi ||->f64 {
+        PI
+    };
+}

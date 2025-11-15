@@ -1,0 +1,6 @@
+import std::math;
+
+fn main ||->() {
+    let value std::math::sin(0.0);
+    println(f64_to_string(value));
+};

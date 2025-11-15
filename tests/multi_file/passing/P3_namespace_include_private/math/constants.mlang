@@ -1,0 +1,4 @@
+namespace math {
+    let PI 3.1415926535;
+    let TAU $PI * 2.0$;
+}

@@ -1,0 +1,5 @@
+include "a.mlang";
+
+fn main ||->() {
+    println(i32_to_string(double_answer()));
+};
