@@ -1,7 +1,7 @@
 //! RawASTを意味解析・型チェックし、TypedASTに変換するアナライザー。
 
 extern crate alloc;
-use super::{Analyzer, VariableEntry};
+use super::{Analyzer, FunctionSignature, VariableEntry};
 use crate::alloc::string::ToString;
 use crate::ast::*;
 use crate::error::{CompileError, LangError};
@@ -66,7 +66,12 @@ pub fn analyze_toplevel(
             let signature = analyzer
                 .function_table
                 .get(func_name)
-                .cloned()
+                .and_then(|candidates| {
+                    candidates
+                        .iter()
+                        .find(|sig| sig.definition_span == name.1)
+                        .cloned()
+                })
                 .ok_or_else(|| {
                     LangError::Compile(CompileError::new(
                         format!("Undefined function '{}'", func_name),
@@ -475,6 +480,140 @@ fn analyze_statement_with_hoisting(
     }
 }
 
+fn describe_signature(signature: &FunctionSignature) -> String {
+    let params = signature
+        .param_types
+        .iter()
+        .map(|ty| ty.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "fn {}({}) -> {}",
+        signature.name, params, signature.return_type
+    )
+}
+
+fn format_argument_types(arg_types: &[DataType]) -> String {
+    let joined = arg_types
+        .iter()
+        .map(|ty| ty.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("({})", joined)
+}
+
+fn select_overload(
+    name: &str,
+    candidates: &[FunctionSignature],
+    arg_types: &[DataType],
+    span: Span,
+) -> Result<FunctionSignature, LangError> {
+    let mut matches: Vec<&FunctionSignature> = Vec::new();
+    let mut rejection_notes: Vec<(String, Span)> = Vec::new();
+
+    for candidate in candidates {
+        if candidate.param_types.len() != arg_types.len() {
+            rejection_notes.push((
+                format!(
+                    "{} rejected: expected {} arguments, but {} provided",
+                    describe_signature(candidate),
+                    candidate.param_types.len(),
+                    arg_types.len()
+                ),
+                candidate.definition_span,
+            ));
+            continue;
+        }
+
+        let mut mismatch_reason: Option<String> = None;
+        for (idx, (expected, actual)) in candidate
+            .param_types
+            .iter()
+            .zip(arg_types.iter())
+            .enumerate()
+        {
+            if expected != actual {
+                mismatch_reason = Some(format!(
+                    "{} rejected: argument {} expected '{}', but found '{}'",
+                    describe_signature(candidate),
+                    idx + 1,
+                    expected,
+                    actual
+                ));
+                break;
+            }
+        }
+
+        if let Some(reason) = mismatch_reason {
+            rejection_notes.push((reason, candidate.definition_span));
+            continue;
+        }
+
+        matches.push(candidate);
+    }
+
+    if matches.is_empty() {
+        let mut err = CompileError::new(
+            format!(
+                "No overload of '{}' matches argument types {}",
+                name,
+                format_argument_types(arg_types)
+            ),
+            span,
+        );
+        if rejection_notes.is_empty() {
+            for candidate in candidates {
+                err = err.with_note(
+                    format!("Candidate available: {}", describe_signature(candidate)),
+                    candidate.definition_span,
+                );
+            }
+        } else {
+            for (note, note_span) in rejection_notes {
+                err = err.with_note(note, note_span);
+            }
+        }
+        return Err(LangError::Compile(err));
+    }
+
+    if matches.len() > 1 {
+        let mut err = CompileError::new(
+            format!(
+                "Ambiguous call to '{}' with argument types {}",
+                name,
+                format_argument_types(arg_types)
+            ),
+            span,
+        );
+        for candidate in matches {
+            err = err.with_note(
+                format!("Possible candidate: {}", describe_signature(candidate)),
+                candidate.definition_span,
+            );
+        }
+        return Err(LangError::Compile(err));
+    }
+
+    Ok(matches[0].clone())
+}
+
+fn collect_sexp_call_arguments<'a>(
+    analyzer: &mut Analyzer,
+    parts: &mut &'a [RawExprPart],
+    hoisted_vars: &BTreeSet<String>,
+) -> Result<(Vec<TypedExpr>, &'a [RawExprPart]), LangError> {
+    let mut cursor = *parts;
+    let mut typed_args = Vec::new();
+    while let Some(part) = cursor.first() {
+        if matches!(part, RawExprPart::TypeAnnotation(_, _)) {
+            break;
+        }
+        let typed_arg = analyze_sexp_from_slice(analyzer, &mut cursor, hoisted_vars)?;
+        typed_args.push(typed_arg);
+    }
+    Ok((typed_args, cursor))
+}
+
 /// `f(...)` 形式のC-style関数呼び出しを解決する。
 fn resolve_c_style_call<'a>(
     analyzer: &mut Analyzer,
@@ -483,47 +622,20 @@ fn resolve_c_style_call<'a>(
     arg_nodes: &[RawAstNode],
     parts: &mut &'a [RawExprPart],
 ) -> Result<TypedExpr, LangError> {
-    let signature = analyzer.function_table.get(name).cloned().ok_or_else(|| {
+    let candidates = analyzer.function_table.get(name).cloned().ok_or_else(|| {
         LangError::Compile(CompileError::new(
             format!("Undefined function '{}'", name),
             span,
         ))
     })?;
-    if arg_nodes.len() != signature.param_types.len() {
-        return Err(LangError::Compile(
-            CompileError::new(
-                format!(
-                    "Function '{}' expects {} arguments, but {} were provided",
-                    name,
-                    signature.param_types.len(),
-                    arg_nodes.len()
-                ),
-                span,
-            )
-            .with_note(
-                format!("'{}' is defined here", name),
-                signature.definition_span,
-            ),
-        ));
-    }
 
     let mut typed_args = Vec::new();
-    for (i, arg_node) in arg_nodes.iter().enumerate() {
+    for arg_node in arg_nodes {
         let typed_arg = analyze_expr(analyzer, arg_node)?;
-        if typed_arg.data_type != signature.param_types[i] {
-            return Err(LangError::Compile(CompileError::new(
-                format!(
-                    "Mismatched type for argument {} of function '{}': expected '{}', but found '{}'",
-                    i + 1,
-                    name,
-                    signature.param_types[i],
-                    typed_arg.data_type
-                ),
-                typed_arg.span,
-            )));
-        }
         typed_args.push(typed_arg);
     }
+    let arg_types: Vec<DataType> = typed_args.iter().map(|arg| arg.data_type.clone()).collect();
+    let signature = select_overload(name, &candidates, &arg_types, span)?;
 
     // 呼び出し元のスライスから、消費した識別子とCStyleArgsの2つ分を進める
     *parts = &parts[2..];
@@ -572,41 +684,12 @@ fn resolve_sexp_call_or_variable<'a>(
         }
     }
     // 2. 関数として解決できるか試す
-    if let Some(signature) = analyzer.function_table.get(name).cloned() {
-        let mut typed_args = Vec::new();
-        for i in 0..signature.param_types.len() {
-            if parts.is_empty() {
-                return Err(LangError::Compile(
-                    CompileError::new(
-                        format!(
-                            "Function '{}' expects {} arguments, but only {} were provided",
-                            name,
-                            signature.param_types.len(),
-                            i
-                        ),
-                        span,
-                    )
-                    .with_note(
-                        format!("'{}' is defined here", name),
-                        signature.definition_span,
-                    ),
-                ));
-            }
-            let typed_arg = analyze_sexp_from_slice(analyzer, parts, hoisted_vars)?;
-            if typed_arg.data_type != signature.param_types[i] {
-                return Err(LangError::Compile(CompileError::new(
-                    format!(
-                        "Mismatched type for argument {} of function '{}': expected '{}', but found '{}'",
-                        i + 1,
-                        name,
-                        signature.param_types[i],
-                        typed_arg.data_type
-                    ),
-                    typed_arg.span,
-                )));
-            }
-            typed_args.push(typed_arg);
-        }
+    if let Some(candidates) = analyzer.function_table.get(name).cloned() {
+        let (typed_args, remaining_parts) =
+            collect_sexp_call_arguments(analyzer, parts, hoisted_vars)?;
+        let arg_types: Vec<DataType> = typed_args.iter().map(|arg| arg.data_type.clone()).collect();
+        let signature = select_overload(name, &candidates, &arg_types, span)?;
+        *parts = remaining_parts;
         return Ok(TypedExpr {
             kind: TypedExprKind::FunctionCall {
                 name: name.to_string(),
@@ -937,7 +1020,7 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
             }
         }
         MathAstNode::Call { name, args, span } => {
-            let signature = analyzer
+            let candidates = analyzer
                 .function_table
                 .get(&name.0)
                 .cloned()
@@ -947,41 +1030,14 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
                         name.1,
                     ))
                 })?;
-            if args.len() != signature.param_types.len() {
-                let err = CompileError::new(
-                    format!(
-                        "Function '{}' expects {} arguments, but {} were provided",
-                        name.0,
-                        signature.param_types.len(),
-                        args.len()
-                    ),
-                    *span,
-                )
-                .with_note(
-                    format!("'{}' is defined here", name.0),
-                    signature.definition_span,
-                );
-                return Err(err.into());
-            }
             let mut typed_args = Vec::new();
-            for (i, arg_node) in args.iter().enumerate() {
-                // 引数がRawAstNodeになったので、メインの`analyze_expr`で解析する
+            for arg_node in args {
                 let typed_arg = analyze_expr(analyzer, arg_node)?;
-                let expected_type = &signature.param_types[i];
-                if typed_arg.data_type != *expected_type {
-                    return Err(LangError::Compile(CompileError::new(
-                        format!(
-                            "Mismatched type for argument {} of function '{}': expected '{}', but found '{}'",
-                            i + 1,
-                            name.0,
-                            expected_type,
-                            typed_arg.data_type
-                        ),
-                        typed_arg.span,
-                    )));
-                }
                 typed_args.push(typed_arg);
             }
+            let arg_types: Vec<DataType> =
+                typed_args.iter().map(|arg| arg.data_type.clone()).collect();
+            let signature = select_overload(&name.0, &candidates, &arg_types, *span)?;
             Ok(TypedExpr {
                 kind: TypedExprKind::FunctionCall {
                     name: name.0.clone(),

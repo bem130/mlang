@@ -3,7 +3,7 @@ use mylang_core::ast::{DataType, TypedAstNode};
 use mylang_core::compiler::FunctionSignature;
 use mylang_core::error::LangError;
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -145,11 +145,7 @@ fn load_multi_file_samples(subdir: &str) -> Vec<MultiFileSampleCase> {
                 panic!("failed to read directory entry in {:?}: {}", dir, err)
             });
             let path = entry.path();
-            if path.is_dir() {
-                Some(path)
-            } else {
-                None
-            }
+            if path.is_dir() { Some(path) } else { None }
         })
         .collect();
     entries.sort();
@@ -165,12 +161,13 @@ fn load_multi_file_samples(subdir: &str) -> Vec<MultiFileSampleCase> {
                     err
                 )
             });
-            let metadata: MultiFileMetadata = serde_json::from_str(&metadata_str).unwrap_or_else(|err| {
-                panic!(
-                    "failed to parse metadata JSON for {:?}: {}",
-                    metadata_path, err
-                )
-            });
+            let metadata: MultiFileMetadata =
+                serde_json::from_str(&metadata_str).unwrap_or_else(|err| {
+                    panic!(
+                        "failed to parse metadata JSON for {:?}: {}",
+                        metadata_path, err
+                    )
+                });
 
             let files = collect_mlang_sources(&path);
 
@@ -193,12 +190,10 @@ fn collect_mlang_sources(root: &Path) -> Vec<(PathBuf, String)> {
     let mut files = Vec::new();
 
     while let Some(dir) = stack.pop() {
-        for entry in fs::read_dir(&dir).unwrap_or_else(|err| {
-            panic!("failed to read directory {:?}: {}", dir, err)
-        }) {
-            let entry = entry.unwrap_or_else(|err| {
-                panic!("failed to read directory entry in {:?}: {}", dir, err)
-            });
+        for entry in fs::read_dir(&dir)
+            .unwrap_or_else(|err| panic!("failed to read directory {:?}: {}", dir, err))
+        {
+            let entry = entry.unwrap();
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
@@ -207,9 +202,8 @@ fn collect_mlang_sources(root: &Path) -> Vec<(PathBuf, String)> {
                     .strip_prefix(root)
                     .unwrap_or_else(|_| panic!("failed to strip prefix for {:?}", path))
                     .to_path_buf();
-                let source = fs::read_to_string(&path).unwrap_or_else(|err| {
-                    panic!("failed to read {:?}: {}", path, err)
-                });
+                let source = fs::read_to_string(&path)
+                    .unwrap_or_else(|err| panic!("failed to read {:?}: {}", path, err));
                 files.push((rel_path, source));
             }
         }
@@ -249,45 +243,80 @@ fn passing_samples_match_metadata() {
                     );
                 }
 
+                let mut typed_functions_by_name: HashMap<String, Vec<(Vec<DataType>, DataType)>> =
+                    HashMap::new();
+                for node in &function_nodes {
+                    if let TypedAstNode::FnDef {
+                        name,
+                        params,
+                        return_type,
+                        ..
+                    } = node
+                    {
+                        let param_types =
+                            params.iter().map(|(_, ty)| ty.clone()).collect::<Vec<_>>();
+                        typed_functions_by_name
+                            .entry(name.clone())
+                            .or_default()
+                            .push((param_types, return_type.clone()));
+                    }
+                }
+
                 for func_meta in &functions {
-                    let typed_node = function_nodes
-                        .iter()
-                        .find_map(|node| match node {
-                            TypedAstNode::FnDef {
-                                name,
-                                params,
-                                return_type,
-                                ..
-                            } if name == &func_meta.name => Some((params, return_type)),
-                            _ => None,
-                        })
+                    let entries = typed_functions_by_name
+                        .get_mut(&func_meta.name)
                         .unwrap_or_else(|| {
                             panic!(
                                 "function '{}' not found in typed AST for {}",
                                 func_meta.name, sample.name
                             )
                         });
-
-                    let param_types: Vec<String> = typed_node
-                        .0
+                    let match_index = entries
                         .iter()
-                        .map(|(_, ty)| data_type_to_str(ty))
-                        .collect();
+                        .position(|(params, ret)| {
+                            let param_strings: Vec<String> =
+                                params.iter().map(data_type_to_str).collect();
+                            param_strings == func_meta.params
+                                && data_type_to_str(ret) == func_meta.return_type
+                        })
+                        .unwrap_or_else(|| {
+                            let available: Vec<String> = entries
+                                .iter()
+                                .map(|(params, ret)| {
+                                    let param_repr = params
+                                        .iter()
+                                        .map(data_type_to_str)
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
+                                    format!("({}) -> {}", param_repr, data_type_to_str(ret))
+                                })
+                                .collect();
+                            panic!(
+                                "function '{}' with signature {:?} -> {} not found in typed AST for {}. Available overloads: {:?}",
+                                func_meta.name,
+                                func_meta.params,
+                                func_meta.return_type,
+                                sample.name,
+                                available
+                            );
+                        });
+                    let (param_types, return_type) = entries.remove(match_index);
+                    let rendered_params: Vec<String> =
+                        param_types.iter().map(data_type_to_str).collect();
                     assert_eq!(
-                        param_types, func_meta.params,
+                        rendered_params, func_meta.params,
                         "parameter type mismatch for function '{}' in {}",
                         func_meta.name, sample.name
                     );
-
                     assert_eq!(
-                        data_type_to_str(typed_node.1),
+                        data_type_to_str(&return_type),
                         func_meta.return_type,
                         "return type mismatch for function '{}' in {}",
                         func_meta.name,
                         sample.name
                     );
 
-                    let signature =
+                    let signatures =
                         analysis
                             .function_table
                             .get(&func_meta.name)
@@ -298,7 +327,7 @@ fn passing_samples_match_metadata() {
                                 )
                             });
 
-                    assert_function_signature_matches(signature, func_meta, &sample.name);
+                    assert_function_signature_matches(signatures, func_meta, &sample.name);
                 }
             }
             SampleMetadata::Error { .. } => panic!(
@@ -412,8 +441,7 @@ fn multi_file_sample_layout_is_consistent() {
         assert!(
             has_entry,
             "entry file {:?} missing from multi-file sample {}",
-            sample.entry,
-            sample.name
+            sample.entry, sample.name
         );
     }
 }
@@ -433,23 +461,45 @@ fn multi_file_samples_match_metadata() {
 }
 
 fn assert_function_signature_matches(
-    signature: &FunctionSignature,
+    signatures: &[FunctionSignature],
     metadata: &FunctionMetadata,
     sample_name: &str,
 ) {
-    let param_types: Vec<String> = signature.param_types.iter().map(data_type_to_str).collect();
-    assert_eq!(
-        param_types, metadata.params,
-        "function_table parameter mismatch for function '{}' in {}",
-        metadata.name, sample_name
-    );
+    if let Some(signature) = signatures.iter().find(|sig| {
+        let params: Vec<String> = sig.param_types.iter().map(data_type_to_str).collect();
+        params == metadata.params && data_type_to_str(&sig.return_type) == metadata.return_type
+    }) {
+        let param_types: Vec<String> = signature.param_types.iter().map(data_type_to_str).collect();
+        assert_eq!(
+            param_types, metadata.params,
+            "function_table parameter mismatch for function '{}' in {}",
+            metadata.name, sample_name
+        );
+        assert_eq!(
+            data_type_to_str(&signature.return_type),
+            metadata.return_type,
+            "function_table return type mismatch for function '{}' in {}",
+            metadata.name,
+            sample_name
+        );
+        return;
+    }
 
-    assert_eq!(
-        data_type_to_str(&signature.return_type),
-        metadata.return_type,
-        "function_table return type mismatch for function '{}' in {}",
-        metadata.name,
-        sample_name
+    let available: Vec<String> = signatures
+        .iter()
+        .map(|sig| {
+            let params = sig
+                .param_types
+                .iter()
+                .map(data_type_to_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("fn {}({}) -> {}", sig.name, params, sig.return_type)
+        })
+        .collect();
+    panic!(
+        "expected to find function '{}' with params {:?} and return {} in {}. Available overloads: {:?}",
+        metadata.name, metadata.params, metadata.return_type, sample_name, available
     );
 }
 
@@ -459,6 +509,7 @@ fn data_type_to_str(data_type: &DataType) -> String {
         DataType::F64 => "f64".to_string(),
         DataType::Bool => "bool".to_string(),
         DataType::String => "string".to_string(),
+        DataType::TypeVar(name) => name.clone(),
         DataType::Vector(inner) => format!("Vec<{}>", data_type_to_str(inner)),
         DataType::Unit => "unit".to_string(),
         DataType::Tuple(elements) => {
@@ -470,8 +521,15 @@ fn data_type_to_str(data_type: &DataType) -> String {
             format!("({})", inner)
         }
         DataType::Struct(name) | DataType::Enum(name) => name.clone(),
-        DataType::Function { params, return_type } => {
-            let params_s = params.iter().map(data_type_to_str).collect::<Vec<_>>().join(", ");
+        DataType::Function {
+            params,
+            return_type,
+        } => {
+            let params_s = params
+                .iter()
+                .map(data_type_to_str)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("({}) -> {}", params_s, data_type_to_str(return_type))
         }
     }
