@@ -19,10 +19,17 @@ pub fn generate(generator: &mut WasmGenerator, node: &TypedAstNode) -> Result<()
             return_type,
             ..
         } => {
+            let param_types = params.iter().map(|(_, ty)| ty.clone()).collect::<Vec<_>>();
+            let mangled_name = generator
+                .resolve_function_label(name, &param_types)
+                .expect("function label should be registered before codegen")
+                .to_string();
             generator
                 .wat_buffer
                 .push_str(&format!("\n  ;; --- Function Definition: {} ---\n", name));
-            generator.wat_buffer.push_str(&format!("  (func ${}", name));
+            generator
+                .wat_buffer
+                .push_str(&format!("  (func ${}", mangled_name));
 
             for (param_name, param_type) in params {
                 generator.wat_buffer.push_str(&format!(
@@ -52,7 +59,10 @@ pub fn generate(generator: &mut WasmGenerator, node: &TypedAstNode) -> Result<()
 
             generator.wat_buffer.push_str("  )\n");
         }
-        TypedAstNode::StructDef { .. } | TypedAstNode::EnumDef { .. } => {}
+        TypedAstNode::StructDef { .. }
+        | TypedAstNode::EnumDef { .. }
+        | TypedAstNode::TraitDef { .. }
+        | TypedAstNode::ImplDef { .. } => {}
     }
     Ok(())
 }
@@ -97,6 +107,14 @@ fn generate_print_logic(generator: &mut WasmGenerator) {
     generator
         .wat_buffer
         .push_str("    call $fd_write\n    drop\n");
+}
+
+fn describe_argument_types(types: &[DataType]) -> String {
+    types
+        .iter()
+        .map(|ty| ty.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), LangError> {
@@ -148,6 +166,11 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
                 "i32_to_string" => {
                     generate_expr(generator, &args[0])?;
                     generator.wat_buffer.push_str("    call $__i32_to_string\n");
+                    return Ok(());
+                }
+                "f64_to_string" => {
+                    generate_expr(generator, &args[0])?;
+                    generator.wat_buffer.push_str("    call $__f64_to_string\n");
                     return Ok(());
                 }
                 "string_char_at" => {
@@ -214,9 +237,25 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
             if name.contains('.') {
                 generator.wat_buffer.push_str(&format!("    {}\n", name));
             } else {
+                let arg_types = args
+                    .iter()
+                    .map(|arg| arg.data_type.clone())
+                    .collect::<Vec<_>>();
+                let label = generator
+                    .resolve_function_label(name, &arg_types)
+                    .ok_or_else(|| {
+                        LangError::Compile(CompileError::new(
+                            format!(
+                                "No matching function label for '{}' with argument types ({})",
+                                name,
+                                describe_argument_types(&arg_types)
+                            ),
+                            node.span,
+                        ))
+                    })?;
                 generator
                     .wat_buffer
-                    .push_str(&format!("    call ${}\n", name));
+                    .push_str(&format!("    call ${}\n", label));
             }
         }
         TypedExprKind::LetBinding { name, value, .. } => {
@@ -483,6 +522,9 @@ fn type_size_and_align(data_type: &DataType) -> (u32, u32) {
         DataType::Function { .. } => (4, 4),
         DataType::F64 => (8, 8),
         DataType::Unit => (0, 1),
+        DataType::TypeVar(name) => {
+            panic!("Type variable '{}' cannot be lowered in wasm codegen", name)
+        }
     }
 }
 

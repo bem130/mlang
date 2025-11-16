@@ -1,0 +1,8 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "Numeric::zero", "params": [], "return_type": "i32"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": []
+}

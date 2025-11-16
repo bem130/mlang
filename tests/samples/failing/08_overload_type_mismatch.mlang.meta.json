@@ -1,0 +1,7 @@
+{
+  "expect": "error",
+  "error": {
+    "variant": "compile",
+    "message_contains": "No overload of 'add' matches argument types (i32, string)"
+  }
+}

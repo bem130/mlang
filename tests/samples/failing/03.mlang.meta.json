@@ -2,9 +2,9 @@
   "expect": "error",
   "error": {
     "variant": "compile",
-    "message_contains": "Function 'add' expects 2 arguments"
+    "message_contains": "No overload of 'add' matches argument types (i32)"
   },
   "notes_contains": [
-    "'add' is defined here"
+    "fn add(i32, i32) -> i32 rejected"
   ]
 }

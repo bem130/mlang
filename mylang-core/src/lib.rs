@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 /// コード生成に必要な情報をすべて含みます。
 pub struct AnalysisResult {
     pub typed_ast: Vec<TypedAstNode>,
-    pub function_table: BTreeMap<String, FunctionSignature>,
+    pub function_table: BTreeMap<String, Vec<FunctionSignature>>,
     pub string_headers: BTreeMap<String, (u32, u32)>, // (data_offset, header_offset)
     pub static_offset: u32,
 }
@@ -80,7 +80,9 @@ pub fn prepare_ast(
             }
             RawAstNode::LetHoist { .. }
             | RawAstNode::StructDef { .. }
-            | RawAstNode::EnumDef { .. } => {
+            | RawAstNode::EnumDef { .. }
+            | RawAstNode::TraitDef { .. }
+            | RawAstNode::ImplDef { .. } => {
                 definitions.push(node);
             }
             _ => {
@@ -112,6 +114,7 @@ pub fn prepare_ast(
 
         let main_fn = RawAstNode::LetHoist {
             name: ("main".to_string(), main_name_span),
+            type_params: Vec::new(),
             value: Box::new(RawAstNode::Lambda {
                 params: vec![],
                 body: Box::new(main_body_block),

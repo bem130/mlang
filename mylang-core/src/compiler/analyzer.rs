@@ -1,14 +1,14 @@
 //! RawASTを意味解析・型チェックし、TypedASTに変換するアナライザー。
 
 extern crate alloc;
-use super::{Analyzer, VariableEntry};
+use super::{Analyzer, FunctionSignature, VariableEntry};
 use crate::alloc::string::ToString;
 use crate::ast::*;
 use crate::error::{CompileError, LangError};
 use crate::span::Span;
 use crate::token::Token;
 use alloc::boxed::Box;
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -59,14 +59,38 @@ pub fn analyze_toplevel(
                 span: *span,
             })
         }
-        RawAstNode::LetHoist { name, value, span } => {
+        RawAstNode::TraitDef {
+            name,
+            type_params,
+            span,
+            ..
+        } => Ok(TypedAstNode::TraitDef {
+            name: name.0.clone(),
+            type_params: type_params
+                .iter()
+                .map(|param| param.name.0.clone())
+                .collect(),
+            span: *span,
+        }),
+        RawAstNode::ImplDef { span, .. } => Err(LangError::Compile(CompileError::new(
+            "Impl blocks are processed separately during analysis",
+            *span,
+        ))),
+        RawAstNode::LetHoist {
+            name, value, span, ..
+        } => {
             analyzer.var_counters.clear();
 
             let func_name = &name.0;
             let signature = analyzer
                 .function_table
                 .get(func_name)
-                .cloned()
+                .and_then(|candidates| {
+                    candidates
+                        .iter()
+                        .find(|sig| sig.definition_span == name.1)
+                        .cloned()
+                })
                 .ok_or_else(|| {
                     LangError::Compile(CompileError::new(
                         format!("Undefined function '{}'", func_name),
@@ -74,85 +98,91 @@ pub fn analyze_toplevel(
                     ))
                 })?;
 
-            // ラムダ式の本体を解析するために、パラメータをスコープに追加
-            analyzer.enter_scope();
-            let mut typed_params = Vec::new();
-
-            if let RawAstNode::Lambda { params, .. } = &**value {
-                if params.len() != signature.param_types.len() {
-                    return Err(LangError::Compile(CompileError::new(
-                        format!(
-                            "Mismatched number of parameters for function '{}': expected {}, but found {}",
-                            func_name,
-                            signature.param_types.len(),
-                            params.len()
-                        ),
-                        name.1,
-                    )));
-                }
-
-                for (i, (param_info, _)) in params.iter().enumerate() {
-                    let param_name = &param_info.0;
-                    let param_type = signature.param_types[i].clone();
-                    analyzer.variable_table.push(VariableEntry {
-                        original_name: param_name.clone(),
-                        unique_name: param_name.clone(), // トップレベル関数ではunique化不要
-                        data_type: param_type.clone(),
-                        scope_depth: analyzer.scope_depth,
-                        is_mutable: false,
-                    });
-                    typed_params.push((param_name.clone(), param_type));
-                }
-            }
-
-            // ラムダの本体を直接解析
-            let typed_body = if let RawAstNode::Lambda { body, .. } = &**value {
-                analyze_expr(analyzer, body)?
-            } else {
+            if func_name == "main" && !signature.type_params.is_empty() {
                 return Err(LangError::Compile(CompileError::new(
-                    "Invalid let hoist syntax: expected a lambda expression",
-                    *span,
-                )));
-            };
-
-            let mut return_type_resolved = signature.return_type.clone();
-
-            // main関数の型チェック
-            if func_name == "main" && return_type_resolved != DataType::Unit {
-                return Err(LangError::Compile(CompileError::new(
-                    "The 'main' function must have a return type of '()'",
+                    "The 'main' function cannot have generic parameters",
                     name.1,
                 )));
             }
 
-            if typed_body.data_type != return_type_resolved {
-                // Unit型への暗黙の変換を許容
-                if return_type_resolved == DataType::Unit {
-                    // 何もしない。コード生成器がdropを追加する
+            let type_scope_len = analyzer.push_type_params(&signature.type_params);
+            let result = (|| {
+                analyzer.enter_scope();
+                let mut typed_params = Vec::new();
+
+                if let RawAstNode::Lambda { params, .. } = &**value {
+                    if params.len() != signature.param_types.len() {
+                        return Err(LangError::Compile(CompileError::new(
+                            format!(
+                                "Mismatched number of parameters for function '{}': expected {}, but found {}",
+                                func_name,
+                                signature.param_types.len(),
+                                params.len()
+                            ),
+                            name.1,
+                        )));
+                    }
+
+                    for (i, (param_info, _)) in params.iter().enumerate() {
+                        let param_name = &param_info.0;
+                        let param_type = signature.param_types[i].clone();
+                        analyzer.variable_table.push(VariableEntry {
+                            original_name: param_name.clone(),
+                            unique_name: param_name.clone(),
+                            data_type: param_type.clone(),
+                            scope_depth: analyzer.scope_depth,
+                            is_mutable: false,
+                        });
+                        typed_params.push((param_name.clone(), param_type));
+                    }
+                }
+
+                let typed_body = if let RawAstNode::Lambda { body, .. } = &**value {
+                    analyze_expr(analyzer, body)?
                 } else {
                     return Err(LangError::Compile(CompileError::new(
-                        format!(
-                            "Mismatched return type: expected '{}', but function body returns '{}'",
-                            return_type_resolved, typed_body.data_type
-                        ),
-                        typed_body.span,
+                        "Invalid let hoist syntax: expected a lambda expression",
+                        *span,
+                    )));
+                };
+
+                let mut return_type_resolved = signature.return_type.clone();
+
+                if func_name == "main" && return_type_resolved != DataType::Unit {
+                    return Err(LangError::Compile(CompileError::new(
+                        "The 'main' function must have a return type of '()'",
+                        name.1,
                     )));
                 }
-            }
 
-            analyzer.leave_scope();
+                if typed_body.data_type != return_type_resolved {
+                    if return_type_resolved != DataType::Unit {
+                        return Err(LangError::Compile(CompileError::new(
+                            format!(
+                                "Mismatched return type: expected '{}', but function body returns '{}'",
+                                return_type_resolved, typed_body.data_type
+                            ),
+                            typed_body.span,
+                        )));
+                    }
+                }
 
-            if func_name == "main" {
-                return_type_resolved = DataType::Unit;
-            }
+                analyzer.leave_scope();
 
-            Ok(TypedAstNode::FnDef {
-                name: func_name.clone(),
-                params: typed_params,
-                body: typed_body,
-                return_type: return_type_resolved,
-                span: *span,
-            })
+                if func_name == "main" {
+                    return_type_resolved = DataType::Unit;
+                }
+
+                Ok(TypedAstNode::FnDef {
+                    name: func_name.clone(),
+                    params: typed_params,
+                    body: typed_body,
+                    return_type: return_type_resolved,
+                    span: *span,
+                })
+            })();
+            analyzer.pop_type_params(type_scope_len);
+            result
         }
         // トップレベルの他の式は暗黙のmain関数の一部として扱われる (lib.rsでラップ済み)
         _ => Err(LangError::Compile(CompileError::new(
@@ -160,6 +190,76 @@ pub fn analyze_toplevel(
             node.span(),
         ))),
     }
+}
+
+pub fn analyze_impl_block(
+    analyzer: &mut Analyzer,
+    node: &RawAstNode,
+) -> Result<Vec<TypedAstNode>, LangError> {
+    let RawAstNode::ImplDef {
+        trait_name,
+        trait_args,
+        self_type,
+        methods,
+        span,
+    } = node
+    else {
+        return Ok(Vec::new());
+    };
+
+    let trait_arg_types = trait_args
+        .iter()
+        .map(|(ty, ty_span)| analyzer.string_to_type(ty, *ty_span))
+        .collect::<Result<Vec<_>, _>>()?;
+    let self_type_resolved = analyzer.string_to_type(&self_type.0, self_type.1)?;
+    let mut typed_nodes = Vec::new();
+    typed_nodes.push(TypedAstNode::ImplDef {
+        trait_name: trait_name.0.clone(),
+        trait_args: trait_arg_types.clone(),
+        self_type: self_type_resolved.clone(),
+        span: *span,
+    });
+
+    for method in methods {
+        if !method.type_params.is_empty() {
+            return Err(LangError::Compile(CompileError::new(
+                "Trait implementation methods cannot declare generics yet",
+                method.name.1,
+            )));
+        }
+        let body = method.body.as_ref().ok_or_else(|| {
+            LangError::Compile(CompileError::new(
+                format!(
+                    "Method '{}' in impl for '{}' must provide a body",
+                    method.name.0, self_type_resolved
+                ),
+                method.name.1,
+            ))
+        })?;
+
+        let synthetic_lambda = RawAstNode::Lambda {
+            params: method.params.clone(),
+            body: body.clone(),
+            return_type: method.return_type.clone(),
+            span: method.span,
+        };
+        let synthetic_fn = RawAstNode::LetHoist {
+            name: (
+                format!("{}::{}", trait_name.0, method.name.0),
+                method.name.1,
+            ),
+            type_params: Vec::new(),
+            value: Box::new(synthetic_lambda),
+            span: method.span,
+        };
+
+        let alias_len = analyzer.push_type_alias("Self", self_type_resolved.clone());
+        let typed = analyze_toplevel(analyzer, &synthetic_fn);
+        analyzer.pop_type_alias(alias_len);
+        typed_nodes.push(typed?);
+    }
+
+    Ok(typed_nodes)
 }
 
 /// RawASTノード（式）を受け取り、意味解析と型チェックを行ってTypedExprを返す
@@ -245,7 +345,9 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                 span: *span,
             })
         }
-        RawAstNode::LetHoist { name, value, span } => {
+        RawAstNode::LetHoist {
+            name, value, span, ..
+        } => {
             let typed_value = analyze_expr(analyzer, value)?;
             let count = analyzer.var_counters.entry(name.0.clone()).or_insert(0);
             let unique_name = format!("{}_{}", name.0, count);
@@ -429,6 +531,14 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                 *span,
             )))
         }
+        RawAstNode::TraitDef { span, .. } => Err(LangError::Compile(CompileError::new(
+            "Trait definitions cannot appear inside expressions",
+            *span,
+        ))),
+        RawAstNode::ImplDef { span, .. } => Err(LangError::Compile(CompileError::new(
+            "Impl blocks cannot appear inside expressions",
+            *span,
+        ))),
     }
 }
 
@@ -475,6 +585,364 @@ fn analyze_statement_with_hoisting(
     }
 }
 
+fn describe_signature(signature: &FunctionSignature) -> String {
+    let params = signature
+        .param_types
+        .iter()
+        .map(|ty| ty.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let generics = if signature.type_params.is_empty() {
+        String::new()
+    } else {
+        let mut formatted = Vec::new();
+        for param in &signature.type_params {
+            let bound_strings = signature
+                .trait_bounds
+                .iter()
+                .filter(|bound| &bound.type_param == param)
+                .map(|bound| {
+                    if bound.trait_args.is_empty() {
+                        bound.trait_name.clone()
+                    } else {
+                        format!(
+                            "{}<{}>",
+                            bound.trait_name,
+                            bound
+                                .trait_args
+                                .iter()
+                                .map(|arg| arg.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    }
+                })
+                .collect::<Vec<_>>();
+            if bound_strings.is_empty() {
+                formatted.push(param.clone());
+            } else {
+                formatted.push(format!("{}: {}", param, bound_strings.join(" + ")));
+            }
+        }
+        format!("<{}>", formatted.join(", "))
+    };
+    format!(
+        "fn {}{}({}) -> {}",
+        signature.name, generics, params, signature.return_type
+    )
+}
+
+fn format_argument_types(arg_types: &[DataType]) -> String {
+    let joined = arg_types
+        .iter()
+        .map(|ty| ty.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("({})", joined)
+}
+
+fn select_overload(
+    analyzer: &Analyzer,
+    name: &str,
+    candidates: &[FunctionSignature],
+    arg_types: &[DataType],
+    span: Span,
+) -> Result<FunctionSignature, LangError> {
+    let mut matches: Vec<FunctionSignature> = Vec::new();
+    let mut rejection_notes: Vec<(String, Span)> = Vec::new();
+
+    for candidate in candidates {
+        if candidate.param_types.len() != arg_types.len() {
+            rejection_notes.push((
+                format!(
+                    "{} rejected: expected {} arguments, but {} provided",
+                    describe_signature(candidate),
+                    candidate.param_types.len(),
+                    arg_types.len()
+                ),
+                candidate.definition_span,
+            ));
+            continue;
+        }
+
+        let mut substitution: BTreeMap<String, DataType> = BTreeMap::new();
+        let mut rejected = None;
+        for (idx, (expected, actual)) in candidate
+            .param_types
+            .iter()
+            .zip(arg_types.iter())
+            .enumerate()
+        {
+            if let Err(reason) = unify_types(expected, actual, &mut substitution) {
+                rejected = Some(format!(
+                    "{} rejected: argument {} {}",
+                    describe_signature(candidate),
+                    idx + 1,
+                    reason
+                ));
+                break;
+            }
+        }
+
+        if let Some(reason) = rejected {
+            rejection_notes.push((reason, candidate.definition_span));
+            continue;
+        }
+
+        if let Some(unbound) = candidate
+            .type_params
+            .iter()
+            .find(|name| !substitution.contains_key(*name))
+        {
+            rejection_notes.push((
+                format!(
+                    "{} rejected: type parameter '{}' could not be inferred from arguments {}",
+                    describe_signature(candidate),
+                    unbound,
+                    format_argument_types(arg_types)
+                ),
+                candidate.definition_span,
+            ));
+            continue;
+        }
+
+        if let Err(reason) = check_trait_bounds(analyzer, candidate, &substitution) {
+            rejection_notes.push((
+                format!("{} rejected: {}", describe_signature(candidate), reason),
+                candidate.definition_span,
+            ));
+            continue;
+        }
+
+        matches.push(instantiate_signature(candidate, &substitution));
+    }
+
+    if matches.is_empty() {
+        let mut err = CompileError::new(
+            format!(
+                "No overload of '{}' matches argument types {}",
+                name,
+                format_argument_types(arg_types)
+            ),
+            span,
+        );
+        if rejection_notes.is_empty() {
+            for candidate in candidates {
+                err = err.with_note(
+                    format!("Candidate available: {}", describe_signature(candidate)),
+                    candidate.definition_span,
+                );
+            }
+        } else {
+            for (note, note_span) in rejection_notes {
+                err = err.with_note(note, note_span);
+            }
+        }
+        return Err(LangError::Compile(err));
+    }
+
+    if matches.len() > 1 {
+        let mut err = CompileError::new(
+            format!(
+                "Ambiguous call to '{}' with argument types {}",
+                name,
+                format_argument_types(arg_types)
+            ),
+            span,
+        );
+        for candidate in &matches {
+            err = err.with_note(
+                format!("Possible candidate: {}", describe_signature(candidate)),
+                candidate.definition_span,
+            );
+        }
+        return Err(LangError::Compile(err));
+    }
+
+    Ok(matches[0].clone())
+}
+
+fn check_trait_bounds(
+    analyzer: &Analyzer,
+    signature: &FunctionSignature,
+    substitution: &BTreeMap<String, DataType>,
+) -> Result<(), String> {
+    for bound in &signature.trait_bounds {
+        let actual_type = substitution.get(&bound.type_param).ok_or_else(|| {
+            format!(
+                "type parameter '{}' was not inferred for trait bound",
+                bound.type_param
+            )
+        })?;
+        let trait_args = bound
+            .trait_args
+            .iter()
+            .map(|arg| apply_type_substitution(arg, substitution))
+            .collect::<Vec<_>>();
+        if !analyzer.trait_impl_exists(&bound.trait_name, &trait_args, actual_type) {
+            let args_display = if trait_args.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "<{}>",
+                    trait_args
+                        .iter()
+                        .map(|ty| ty.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            return Err(format!(
+                "type '{}' does not implement {}{}",
+                actual_type, bound.trait_name, args_display
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn instantiate_signature(
+    signature: &FunctionSignature,
+    substitution: &BTreeMap<String, DataType>,
+) -> FunctionSignature {
+    let mut instantiated = signature.clone();
+    instantiated.param_types = instantiated
+        .param_types
+        .iter()
+        .map(|ty| apply_type_substitution(ty, substitution))
+        .collect();
+    instantiated.return_type = apply_type_substitution(&signature.return_type, substitution);
+    instantiated
+}
+
+pub(crate) fn apply_type_substitution(
+    ty: &DataType,
+    substitution: &BTreeMap<String, DataType>,
+) -> DataType {
+    match ty {
+        DataType::TypeVar(name) => substitution
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| DataType::TypeVar(name.clone())),
+        DataType::Vector(inner) => {
+            DataType::Vector(Box::new(apply_type_substitution(inner, substitution)))
+        }
+        DataType::Tuple(elements) => DataType::Tuple(
+            elements
+                .iter()
+                .map(|element| apply_type_substitution(element, substitution))
+                .collect(),
+        ),
+        DataType::Function {
+            params,
+            return_type,
+        } => DataType::Function {
+            params: params
+                .iter()
+                .map(|param| apply_type_substitution(param, substitution))
+                .collect(),
+            return_type: Box::new(apply_type_substitution(return_type, substitution)),
+        },
+        _ => ty.clone(),
+    }
+}
+
+fn unify_types(
+    expected: &DataType,
+    actual: &DataType,
+    substitution: &mut BTreeMap<String, DataType>,
+) -> Result<(), String> {
+    match expected {
+        DataType::TypeVar(name) => unify_type_variable(name, actual, substitution),
+        DataType::Vector(inner) => match actual {
+            DataType::Vector(actual_inner) => unify_types(inner, actual_inner, substitution),
+            _ => Err(format!("expected '{}' but found '{}'", expected, actual)),
+        },
+        DataType::Tuple(elements) => match actual {
+            DataType::Tuple(actual_elements) => {
+                if elements.len() != actual_elements.len() {
+                    return Err(format!(
+                        "expected tuple of length {} but found {}",
+                        elements.len(),
+                        actual_elements.len()
+                    ));
+                }
+                for (expected_elem, actual_elem) in elements.iter().zip(actual_elements.iter()) {
+                    unify_types(expected_elem, actual_elem, substitution)?;
+                }
+                Ok(())
+            }
+            _ => Err(format!("expected '{}' but found '{}'", expected, actual)),
+        },
+        DataType::Function {
+            params,
+            return_type,
+        } => match actual {
+            DataType::Function {
+                params: actual_params,
+                return_type: actual_return,
+            } => {
+                if params.len() != actual_params.len() {
+                    return Err(format!(
+                        "expected function with {} parameters but found {}",
+                        params.len(),
+                        actual_params.len()
+                    ));
+                }
+                for (expected_param, actual_param) in params.iter().zip(actual_params.iter()) {
+                    unify_types(expected_param, actual_param, substitution)?;
+                }
+                unify_types(return_type, actual_return, substitution)
+            }
+            _ => Err(format!("expected '{}' but found '{}'", expected, actual)),
+        },
+        _ => {
+            if expected == actual {
+                Ok(())
+            } else {
+                Err(format!("expected '{}' but found '{}'", expected, actual))
+            }
+        }
+    }
+}
+
+fn unify_type_variable(
+    name: &str,
+    actual: &DataType,
+    substitution: &mut BTreeMap<String, DataType>,
+) -> Result<(), String> {
+    if let Some(bound) = substitution.get(name) {
+        if bound == actual {
+            Ok(())
+        } else {
+            Err(format!(
+                "type variable '{}' was inferred as '{}' but must also match '{}'",
+                name, bound, actual
+            ))
+        }
+    } else {
+        substitution.insert(name.to_string(), actual.clone());
+        Ok(())
+    }
+}
+
+fn collect_sexp_call_arguments<'a>(
+    analyzer: &mut Analyzer,
+    parts: &mut &'a [RawExprPart],
+    hoisted_vars: &BTreeSet<String>,
+) -> Result<(Vec<TypedExpr>, &'a [RawExprPart]), LangError> {
+    let mut cursor = *parts;
+    let mut typed_args = Vec::new();
+    while let Some(part) = cursor.first() {
+        if matches!(part, RawExprPart::TypeAnnotation(_, _)) {
+            break;
+        }
+        let typed_arg = analyze_sexp_from_slice(analyzer, &mut cursor, hoisted_vars)?;
+        typed_args.push(typed_arg);
+    }
+    Ok((typed_args, cursor))
+}
+
 /// `f(...)` 形式のC-style関数呼び出しを解決する。
 fn resolve_c_style_call<'a>(
     analyzer: &mut Analyzer,
@@ -483,47 +951,20 @@ fn resolve_c_style_call<'a>(
     arg_nodes: &[RawAstNode],
     parts: &mut &'a [RawExprPart],
 ) -> Result<TypedExpr, LangError> {
-    let signature = analyzer.function_table.get(name).cloned().ok_or_else(|| {
+    let candidates = analyzer.function_table.get(name).cloned().ok_or_else(|| {
         LangError::Compile(CompileError::new(
             format!("Undefined function '{}'", name),
             span,
         ))
     })?;
-    if arg_nodes.len() != signature.param_types.len() {
-        return Err(LangError::Compile(
-            CompileError::new(
-                format!(
-                    "Function '{}' expects {} arguments, but {} were provided",
-                    name,
-                    signature.param_types.len(),
-                    arg_nodes.len()
-                ),
-                span,
-            )
-            .with_note(
-                format!("'{}' is defined here", name),
-                signature.definition_span,
-            ),
-        ));
-    }
 
     let mut typed_args = Vec::new();
-    for (i, arg_node) in arg_nodes.iter().enumerate() {
+    for arg_node in arg_nodes {
         let typed_arg = analyze_expr(analyzer, arg_node)?;
-        if typed_arg.data_type != signature.param_types[i] {
-            return Err(LangError::Compile(CompileError::new(
-                format!(
-                    "Mismatched type for argument {} of function '{}': expected '{}', but found '{}'",
-                    i + 1,
-                    name,
-                    signature.param_types[i],
-                    typed_arg.data_type
-                ),
-                typed_arg.span,
-            )));
-        }
         typed_args.push(typed_arg);
     }
+    let arg_types: Vec<DataType> = typed_args.iter().map(|arg| arg.data_type.clone()).collect();
+    let signature = select_overload(analyzer, name, &candidates, &arg_types, span)?;
 
     // 呼び出し元のスライスから、消費した識別子とCStyleArgsの2つ分を進める
     *parts = &parts[2..];
@@ -572,41 +1013,12 @@ fn resolve_sexp_call_or_variable<'a>(
         }
     }
     // 2. 関数として解決できるか試す
-    if let Some(signature) = analyzer.function_table.get(name).cloned() {
-        let mut typed_args = Vec::new();
-        for i in 0..signature.param_types.len() {
-            if parts.is_empty() {
-                return Err(LangError::Compile(
-                    CompileError::new(
-                        format!(
-                            "Function '{}' expects {} arguments, but only {} were provided",
-                            name,
-                            signature.param_types.len(),
-                            i
-                        ),
-                        span,
-                    )
-                    .with_note(
-                        format!("'{}' is defined here", name),
-                        signature.definition_span,
-                    ),
-                ));
-            }
-            let typed_arg = analyze_sexp_from_slice(analyzer, parts, hoisted_vars)?;
-            if typed_arg.data_type != signature.param_types[i] {
-                return Err(LangError::Compile(CompileError::new(
-                    format!(
-                        "Mismatched type for argument {} of function '{}': expected '{}', but found '{}'",
-                        i + 1,
-                        name,
-                        signature.param_types[i],
-                        typed_arg.data_type
-                    ),
-                    typed_arg.span,
-                )));
-            }
-            typed_args.push(typed_arg);
-        }
+    if let Some(candidates) = analyzer.function_table.get(name).cloned() {
+        let (typed_args, remaining_parts) =
+            collect_sexp_call_arguments(analyzer, parts, hoisted_vars)?;
+        let arg_types: Vec<DataType> = typed_args.iter().map(|arg| arg.data_type.clone()).collect();
+        let signature = select_overload(analyzer, name, &candidates, &arg_types, span)?;
+        *parts = remaining_parts;
         return Ok(TypedExpr {
             kind: TypedExprKind::FunctionCall {
                 name: name.to_string(),
@@ -937,7 +1349,7 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
             }
         }
         MathAstNode::Call { name, args, span } => {
-            let signature = analyzer
+            let candidates = analyzer
                 .function_table
                 .get(&name.0)
                 .cloned()
@@ -947,41 +1359,14 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
                         name.1,
                     ))
                 })?;
-            if args.len() != signature.param_types.len() {
-                let err = CompileError::new(
-                    format!(
-                        "Function '{}' expects {} arguments, but {} were provided",
-                        name.0,
-                        signature.param_types.len(),
-                        args.len()
-                    ),
-                    *span,
-                )
-                .with_note(
-                    format!("'{}' is defined here", name.0),
-                    signature.definition_span,
-                );
-                return Err(err.into());
-            }
             let mut typed_args = Vec::new();
-            for (i, arg_node) in args.iter().enumerate() {
-                // 引数がRawAstNodeになったので、メインの`analyze_expr`で解析する
+            for arg_node in args {
                 let typed_arg = analyze_expr(analyzer, arg_node)?;
-                let expected_type = &signature.param_types[i];
-                if typed_arg.data_type != *expected_type {
-                    return Err(LangError::Compile(CompileError::new(
-                        format!(
-                            "Mismatched type for argument {} of function '{}': expected '{}', but found '{}'",
-                            i + 1,
-                            name.0,
-                            expected_type,
-                            typed_arg.data_type
-                        ),
-                        typed_arg.span,
-                    )));
-                }
                 typed_args.push(typed_arg);
             }
+            let arg_types: Vec<DataType> =
+                typed_args.iter().map(|arg| arg.data_type.clone()).collect();
+            let signature = select_overload(analyzer, &name.0, &candidates, &arg_types, *span)?;
             Ok(TypedExpr {
                 kind: TypedExprKind::FunctionCall {
                     name: name.0.clone(),

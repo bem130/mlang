@@ -1,0 +1,7 @@
+{
+  "expect": "error",
+  "error": {
+    "variant": "compile",
+    "message_contains": "does not implement Numeric"
+  }
+}
