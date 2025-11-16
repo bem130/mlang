@@ -1,0 +1,12 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "0",
+    "-0.5",
+    "42.125",
+    "-13.75"
+  ]
+}

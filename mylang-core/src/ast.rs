@@ -317,6 +317,7 @@ pub enum DataType {
     F64,
     Bool,
     String,
+    TypeVar(String),
     Vector(Box<DataType>),
     Unit, // 値を返さないことを示す型
     Tuple(Vec<DataType>),
@@ -336,6 +337,7 @@ impl fmt::Display for DataType {
             DataType::F64 => write!(f, "f64"),
             DataType::Bool => write!(f, "bool"),
             DataType::String => write!(f, "string"),
+            DataType::TypeVar(name) => write!(f, "{}", name),
             DataType::Vector(inner) => write!(f, "Vec<{}>", inner),
             DataType::Unit => write!(f, "()"),
             DataType::Tuple(types) => {

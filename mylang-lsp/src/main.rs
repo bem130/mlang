@@ -58,7 +58,7 @@ enum SymbolKind {
 }
 
 struct TypedAnalysis {
-    function_table: BTreeMap<String, FunctionSignature>,
+    function_table: BTreeMap<String, Vec<FunctionSignature>>,
     variable_defs: HashMap<String, VariableDefinition>,
     variable_refs: HashMap<(usize, usize), String>,
     hover_entries: HashMap<(usize, usize), HoverEntry>,
@@ -316,7 +316,7 @@ struct CallContext {
 
 fn build_typed_analysis(
     typed_ast: &[TypedAstNode],
-    function_table: BTreeMap<String, FunctionSignature>,
+    function_table: BTreeMap<String, Vec<FunctionSignature>>,
 ) -> (TypedAnalysis, Vec<Issue>) {
     let mut variable_defs = HashMap::new();
     let mut variable_refs = HashMap::new();
@@ -325,48 +325,60 @@ fn build_typed_analysis(
     let mut usage_counts: HashMap<String, usize> = HashMap::new();
     let mut bindings: Vec<(String, String, Span, DataType)> = Vec::new();
 
-    for (name, signature) in &function_table {
-        if signature.definition_span.line > 0 {
-            let hover_text = format_signature_markdown(name, signature);
-            hover_entries.insert(
-                (
-                    signature.definition_span.line,
-                    signature.definition_span.column,
-                ),
-                HoverEntry {
-                    markdown: hover_text,
-                },
-            );
-            symbol_kinds.insert(
-                (
-                    signature.definition_span.line,
-                    signature.definition_span.column,
-                ),
-                SymbolKind::Function,
-            );
+    for (name, signatures) in &function_table {
+        if signatures.is_empty() {
+            continue;
+        }
+        let hover_text = format_signature_markdown(name, signatures);
+        for signature in signatures {
+            if signature.definition_span.line > 0 {
+                hover_entries.insert(
+                    (
+                        signature.definition_span.line,
+                        signature.definition_span.column,
+                    ),
+                    HoverEntry {
+                        markdown: hover_text.clone(),
+                    },
+                );
+                symbol_kinds.insert(
+                    (
+                        signature.definition_span.line,
+                        signature.definition_span.column,
+                    ),
+                    SymbolKind::Function,
+                );
+            }
         }
     }
 
     for node in typed_ast {
-        if let TypedAstNode::FnDef { name, body, .. } = node {
-            if let Some(signature) = function_table.get(name) {
-                if signature.definition_span.line > 0 {
-                    hover_entries.insert(
-                        (
-                            signature.definition_span.line,
-                            signature.definition_span.column,
-                        ),
-                        HoverEntry {
-                            markdown: format_signature_markdown(name, signature),
-                        },
-                    );
-                    symbol_kinds.insert(
-                        (
-                            signature.definition_span.line,
-                            signature.definition_span.column,
-                        ),
-                        SymbolKind::Function,
-                    );
+        if let TypedAstNode::FnDef {
+            name, body, span, ..
+        } = node
+        {
+            if let Some(signatures) = function_table.get(name) {
+                let hover_text = format_signature_markdown(name, signatures);
+                if let Some(signature) = signatures.iter().find(|sig| sig.definition_span == *span)
+                {
+                    if signature.definition_span.line > 0 {
+                        hover_entries.insert(
+                            (
+                                signature.definition_span.line,
+                                signature.definition_span.column,
+                            ),
+                            HoverEntry {
+                                markdown: hover_text.clone(),
+                            },
+                        );
+                        symbol_kinds.insert(
+                            (
+                                signature.definition_span.line,
+                                signature.definition_span.column,
+                            ),
+                            SymbolKind::Function,
+                        );
+                    }
                 }
             }
             walk_expr(
@@ -418,7 +430,7 @@ fn walk_expr(
     symbol_kinds: &mut HashMap<(usize, usize), SymbolKind>,
     usage_counts: &mut HashMap<String, usize>,
     bindings: &mut Vec<(String, String, Span, DataType)>,
-    function_table: &BTreeMap<String, FunctionSignature>,
+    function_table: &BTreeMap<String, Vec<FunctionSignature>>,
 ) {
     let key = (expr.span.line, expr.span.column);
     match &expr.kind {
@@ -527,14 +539,16 @@ fn walk_expr(
             );
         }
         TypedExprKind::FunctionCall { name, args } => {
-            if let Some(signature) = function_table.get(name) {
-                hover_entries.insert(
-                    key,
-                    HoverEntry {
-                        markdown: format_signature_markdown(name, signature),
-                    },
-                );
-                symbol_kinds.insert(key, SymbolKind::Function);
+            if let Some(signatures) = function_table.get(name) {
+                if !signatures.is_empty() {
+                    hover_entries.insert(
+                        key,
+                        HoverEntry {
+                            markdown: format_signature_markdown(name, signatures),
+                        },
+                    );
+                    symbol_kinds.insert(key, SymbolKind::Function);
+                }
             }
             for arg in args {
                 walk_expr(
@@ -776,8 +790,10 @@ impl DocumentSnapshot {
                         return Some(Location::new(uri.clone(), range));
                     }
                 }
-                if let Some(signature) = typed.function_table.get(name) {
-                    if signature.definition_span.line > 0 {
+                if let Some(signatures) = typed.function_table.get(name) {
+                    if let Some(signature) =
+                        signatures.iter().find(|sig| sig.definition_span.line > 0)
+                    {
                         let range = self
                             .line_index
                             .range_for_symbol(signature.definition_span, name);
@@ -795,25 +811,56 @@ impl DocumentSnapshot {
 
     fn signature_help(&self, position: Position) -> Option<SignatureHelp> {
         let typed = self.typed.as_ref()?;
-        let context = find_call_context(&self.tokens, position, &typed.function_table)?;
-        let signature = typed.function_table.get(&context.function_name)?;
-        let label = format_signature_label(&context.function_name, signature);
-        let parameters: Vec<ParameterInformation> = signature
-            .param_types
+        let context = find_call_context(&self.tokens, position)?;
+        let signatures = typed.function_table.get(&context.function_name)?;
+        if signatures.is_empty() {
+            return None;
+        }
+        let provided = context.active_parameter + 1;
+        let mut active_signature_index = 0usize;
+        let mut best_score = usize::MAX;
+        for (idx, signature) in signatures.iter().enumerate() {
+            let expected = signature.param_types.len();
+            let score = if expected > provided {
+                expected - provided
+            } else {
+                provided - expected
+            };
+            if score < best_score {
+                best_score = score;
+                active_signature_index = idx;
+            }
+        }
+        let signature_infos: Vec<SignatureInformation> = signatures
             .iter()
-            .map(|ty| ParameterInformation {
-                label: ParameterLabel::Simple(ty.to_string()),
-                documentation: None,
+            .map(|signature| {
+                let label = format_signature_label(&context.function_name, signature);
+                let parameters: Vec<ParameterInformation> = signature
+                    .param_types
+                    .iter()
+                    .map(|ty| ParameterInformation {
+                        label: ParameterLabel::Simple(ty.to_string()),
+                        documentation: None,
+                    })
+                    .collect();
+                let active_parameter = if signature.param_types.is_empty() {
+                    0
+                } else {
+                    context
+                        .active_parameter
+                        .min(signature.param_types.len().saturating_sub(1))
+                };
+                SignatureInformation {
+                    label,
+                    documentation: None,
+                    parameters: Some(parameters),
+                    active_parameter: Some(active_parameter as u32),
+                }
             })
             .collect();
         Some(SignatureHelp {
-            signatures: vec![SignatureInformation {
-                label,
-                documentation: None,
-                parameters: Some(parameters),
-                active_parameter: Some(context.active_parameter as u32),
-            }],
-            active_signature: Some(0),
+            signatures: signature_infos,
+            active_signature: Some(active_signature_index as u32),
             active_parameter: Some(context.active_parameter as u32),
         })
     }
@@ -916,17 +963,16 @@ impl DocumentSnapshot {
         })
     }
 }
-fn format_signature_markdown(name: &str, signature: &FunctionSignature) -> String {
-    let params = signature
-        .param_types
+fn format_signature_markdown(name: &str, signatures: &[FunctionSignature]) -> String {
+    if signatures.is_empty() {
+        return format!("```mlang\nfn {}()\n```", name);
+    }
+    let lines = signatures
         .iter()
-        .map(|ty| ty.to_string())
+        .map(|signature| format_signature_label(name, signature))
         .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "```mlang\nfn {}({}) -> {}\n```",
-        name, params, signature.return_type
-    )
+        .join("\n");
+    format!("```mlang\n{}\n```", lines)
 }
 
 fn format_signature_label(name: &str, signature: &FunctionSignature) -> String {
@@ -944,11 +990,7 @@ enum Frame {
     Group,
 }
 
-fn find_call_context(
-    tokens: &[TokenInfo],
-    position: Position,
-    functions: &BTreeMap<String, FunctionSignature>,
-) -> Option<CallContext> {
+fn find_call_context(tokens: &[TokenInfo], position: Position) -> Option<CallContext> {
     let target_line = position.line as usize + 1;
     let target_col = position.character as usize + 1;
     let mut stack: Vec<Frame> = Vec::new();
@@ -992,17 +1034,10 @@ fn find_call_context(
 
     while let Some(frame) = stack.pop() {
         if let Frame::Call { name, arg_index } = frame {
-            if let Some(signature) = functions.get(&name) {
-                let active = if signature.param_types.is_empty() {
-                    0
-                } else {
-                    arg_index.min(signature.param_types.len() - 1)
-                };
-                return Some(CallContext {
-                    function_name: name,
-                    active_parameter: active,
-                });
-            }
+            return Some(CallContext {
+                function_name: name,
+                active_parameter: arg_index,
+            });
         }
     }
     None

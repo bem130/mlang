@@ -19,7 +19,7 @@ use alloc::vec::Vec;
 ///    - 名前解決、型チェック、ASTの構造変換を行う。
 pub struct Analyzer {
     pub scope_depth: usize,
-    pub function_table: BTreeMap<String, FunctionSignature>,
+    pub function_table: BTreeMap<String, Vec<FunctionSignature>>,
     pub variable_table: Vec<VariableEntry>,
     // 各変数名のカウンター
     pub var_counters: BTreeMap<String, u32>,
@@ -42,6 +42,7 @@ pub struct VariableEntry {
 
 #[derive(Clone)]
 pub struct FunctionSignature {
+    pub name: String,
     pub param_types: Vec<DataType>,
     pub return_type: DataType,
     pub definition_span: Span,
@@ -67,64 +68,46 @@ pub struct EnumVariantInfo {
 
 impl Analyzer {
     pub fn new() -> Self {
-        let mut function_table = BTreeMap::new();
-        // --- 標準組み込み関数を登録 ---
-        function_table.insert(
-            "string_concat".to_string(),
-            FunctionSignature {
-                param_types: alloc::vec![DataType::String, DataType::String],
-                return_type: DataType::String,
-                definition_span: Span::default(),
-            },
-        );
-        function_table.insert(
-            "i32_to_string".to_string(),
-            FunctionSignature {
-                param_types: alloc::vec![DataType::I32],
-                return_type: DataType::String,
-                definition_span: Span::default(),
-            },
-        );
-        function_table.insert(
-            "f64_to_string".to_string(),
-            FunctionSignature {
-                param_types: alloc::vec![DataType::F64],
-                return_type: DataType::String,
-                definition_span: Span::default(),
-            },
-        );
-        function_table.insert(
-            "print".to_string(),
-            FunctionSignature {
-                param_types: alloc::vec![DataType::String],
-                return_type: DataType::Unit,
-                definition_span: Span::default(),
-            },
-        );
-        function_table.insert(
-            "println".to_string(),
-            FunctionSignature {
-                param_types: alloc::vec![DataType::String],
-                return_type: DataType::Unit,
-                definition_span: Span::default(),
-            },
-        );
-        function_table.insert(
-            "read_line".to_string(),
-            FunctionSignature {
-                param_types: alloc::vec![],
-                return_type: DataType::String,
-                definition_span: Span::default(),
-            },
-        );
-        function_table.insert(
-            "string_char_at".to_string(),
-            FunctionSignature {
-                param_types: alloc::vec![DataType::String, DataType::I32],
-                return_type: DataType::String,
-                definition_span: Span::default(),
-            },
-        );
+        let mut function_table: BTreeMap<String, Vec<FunctionSignature>> = BTreeMap::new();
+        {
+            let mut register_builtin =
+                |name: &str, param_types: Vec<DataType>, return_type: DataType| {
+                    function_table
+                        .entry(name.to_string())
+                        .or_default()
+                        .push(FunctionSignature {
+                            name: name.to_string(),
+                            param_types,
+                            return_type,
+                            definition_span: Span::default(),
+                        });
+                };
+
+            // --- 標準組み込み関数を登録 ---
+            register_builtin(
+                "string_concat",
+                alloc::vec![DataType::String, DataType::String],
+                DataType::String,
+            );
+            register_builtin(
+                "i32_to_string",
+                alloc::vec![DataType::I32],
+                DataType::String,
+            );
+            register_builtin(
+                "f64_to_string",
+                alloc::vec![DataType::F64],
+                DataType::String,
+            );
+            register_builtin("print", alloc::vec![DataType::String], DataType::Unit);
+            register_builtin("println", alloc::vec![DataType::String], DataType::Unit);
+            register_builtin("read_line", alloc::vec![], DataType::String);
+            register_builtin(
+                "string_char_at",
+                alloc::vec![DataType::String, DataType::I32],
+                DataType::String,
+            );
+        }
 
         let mut analyzer = Self {
             scope_depth: 0,
@@ -200,20 +183,30 @@ impl Analyzer {
 
                     let ret_type = self.string_to_type(&return_type.0, return_type.1)?;
 
-                    if self.function_table.contains_key(func_name) {
-                        return Err(LangError::Compile(CompileError::new(
-                            format!("Function '{}' is already defined", func_name),
-                            name.1,
-                        )));
+                    let entry = self.function_table.entry(func_name.clone()).or_default();
+                    if let Some(existing) = entry.iter().find(|signature| {
+                        signature.param_types == param_types && signature.return_type == ret_type
+                    }) {
+                        return Err(LangError::Compile(
+                            CompileError::new(
+                                format!(
+                                    "Function overload '{}' with the same signature is already defined",
+                                    func_name
+                                ),
+                                name.1,
+                            )
+                            .with_note(
+                                "Previous definition is located here",
+                                existing.definition_span,
+                            ),
+                        ));
                     }
-                    self.function_table.insert(
-                        func_name.clone(),
-                        FunctionSignature {
-                            param_types,
-                            return_type: ret_type,
-                            definition_span: name.1,
-                        },
-                    );
+                    entry.push(FunctionSignature {
+                        name: func_name.clone(),
+                        param_types,
+                        return_type: ret_type,
+                        definition_span: name.1,
+                    });
                 }
             }
         }
@@ -379,28 +372,20 @@ impl Analyzer {
     pub fn string_to_type(&self, s: &str, span: Span) -> Result<DataType, LangError> {
         let s = s.trim();
 
-        // Handle function types like `(i32, string) -> bool` or `() -> ()`
-        if s.starts_with('(') && s.contains(" -> ") {
-            if let Some(arrow_idx) = s.rfind(" -> ") {
-                let params_part = s[..arrow_idx].trim();
-                if params_part.starts_with('(') && params_part.ends_with(')') {
-                    let params_inner = &params_part[1..params_part.len() - 1];
-                    let return_type_str = &s[arrow_idx + 4..];
+        if let Some(func) = self.try_parse_function_type(s, span)? {
+            return Ok(func);
+        }
 
-                    let param_strings = self.split_type_params(params_inner, span)?;
-                    let param_types = param_strings
-                        .iter()
-                        .map(|p| self.string_to_type(p, span))
-                        .collect::<Result<Vec<_>, _>>()?;
+        if s == "()" {
+            return Ok(DataType::Unit);
+        }
 
-                    let return_type = self.string_to_type(return_type_str.trim(), span)?;
+        if let Some(tuple) = self.try_parse_tuple_type(s, span)? {
+            return Ok(tuple);
+        }
 
-                    return Ok(DataType::Function {
-                        params: param_types,
-                        return_type: Box::new(return_type),
-                    });
-                }
-            }
+        if let Some(vector) = self.try_parse_vector_type(s, span)? {
+            return Ok(vector);
         }
 
         match s {
@@ -408,39 +393,113 @@ impl Analyzer {
             "f64" => Ok(DataType::F64),
             "bool" => Ok(DataType::Bool),
             "string" => Ok(DataType::String),
-            "()" => Ok(DataType::Unit),
-            _ => {
-                if let Some(inner) = s.strip_prefix("Vec<") {
-                    if !inner.ends_with('>') {
+            _ => self.resolve_named_type(s, span),
+        }
+    }
+
+    fn try_parse_function_type(&self, s: &str, span: Span) -> Result<Option<DataType>, LangError> {
+        if !s.starts_with('(') {
+            return Ok(None);
+        }
+
+        let mut depth = 0;
+        let mut closing_index = None;
+        for (idx, ch) in s.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    if depth == 0 {
                         return Err(LangError::Compile(CompileError::new(
-                            format!("Malformed Vec type '{}': missing closing '>'", s),
+                            "Mismatched parentheses in type signature",
                             span,
                         )));
                     }
-                    let inner_type_str = &inner[..inner.len() - 1];
-                    let inner_type = self.string_to_type(inner_type_str, span)?;
-                    return Ok(DataType::Vector(Box::new(inner_type)));
+                    depth -= 1;
+                    if depth == 0 {
+                        closing_index = Some(idx);
+                        break;
+                    }
                 }
-                if self.struct_table.contains_key(s) {
-                    Ok(DataType::Struct(s.to_string()))
-                } else if self.enum_table.contains_key(s) {
-                    Ok(DataType::Enum(s.to_string()))
-                } else if s.starts_with('(') && s.ends_with(')') {
-                    // Handle tuple types like (i32, bool)
-                    let inner = &s[1..s.len() - 1];
-                    let element_strings = self.split_type_params(inner, span)?;
-                    let element_types = element_strings
-                        .iter()
-                        .map(|p| self.string_to_type(p, span))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    Ok(DataType::Tuple(element_types))
-                } else {
-                    Err(LangError::Compile(CompileError::new(
-                        format!("Unknown type '{}'", s),
-                        span,
-                    )))
-                }
+                _ => {}
             }
+        }
+
+        let closing_index = match closing_index {
+            Some(idx) => idx,
+            None => {
+                return Err(LangError::Compile(CompileError::new(
+                    "Unclosed parentheses in type signature",
+                    span,
+                )));
+            }
+        };
+
+        let remainder = &s[closing_index + 1..];
+        let remainder_trimmed = remainder.trim_start();
+        if !remainder_trimmed.starts_with("->") {
+            return Ok(None);
+        }
+        let return_part = remainder_trimmed[2..].trim_start();
+        if return_part.is_empty() {
+            return Err(LangError::Compile(CompileError::new(
+                "Missing return type in function signature",
+                span,
+            )));
+        }
+
+        let params_inner = &s[1..closing_index];
+        let param_strings = self.split_type_params(params_inner, span)?;
+        let param_types = param_strings
+            .iter()
+            .map(|p| self.string_to_type(p, span))
+            .collect::<Result<Vec<_>, _>>()?;
+        let return_type = self.string_to_type(return_part, span)?;
+
+        Ok(Some(DataType::Function {
+            params: param_types,
+            return_type: Box::new(return_type),
+        }))
+    }
+
+    fn try_parse_tuple_type(&self, s: &str, span: Span) -> Result<Option<DataType>, LangError> {
+        if !(s.starts_with('(') && s.ends_with(')')) {
+            return Ok(None);
+        }
+
+        let inner = &s[1..s.len() - 1];
+        let element_strings = self.split_type_params(inner, span)?;
+        let element_types = element_strings
+            .iter()
+            .map(|p| self.string_to_type(p, span))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(DataType::Tuple(element_types)))
+    }
+
+    fn try_parse_vector_type(&self, s: &str, span: Span) -> Result<Option<DataType>, LangError> {
+        if let Some(inner) = s.strip_prefix("Vec<") {
+            if !inner.ends_with('>') {
+                return Err(LangError::Compile(CompileError::new(
+                    format!("Malformed Vec type '{}': missing closing '>'", s),
+                    span,
+                )));
+            }
+            let inner_type_str = &inner[..inner.len() - 1];
+            let inner_type = self.string_to_type(inner_type_str, span)?;
+            return Ok(Some(DataType::Vector(Box::new(inner_type))));
+        }
+        Ok(None)
+    }
+
+    fn resolve_named_type(&self, s: &str, span: Span) -> Result<DataType, LangError> {
+        if self.struct_table.contains_key(s) {
+            Ok(DataType::Struct(s.to_string()))
+        } else if self.enum_table.contains_key(s) {
+            Ok(DataType::Enum(s.to_string()))
+        } else {
+            Err(LangError::Compile(CompileError::new(
+                format!("Unknown type '{}'", s),
+                span,
+            )))
         }
     }
 
@@ -464,37 +523,99 @@ impl Analyzer {
 
     fn register_vec_builtins(&mut self, suffix: &str, element_type: DataType) {
         let vec_type = DataType::Vector(Box::new(element_type.clone()));
-        self.function_table.insert(
+        let mut register = |name: String, param_types: Vec<DataType>, return_type: DataType| {
+            self.function_table
+                .entry(name.clone())
+                .or_default()
+                .push(FunctionSignature {
+                    name,
+                    param_types,
+                    return_type,
+                    definition_span: Span::default(),
+                });
+        };
+        register(
             format!("vec_new_{}", suffix),
-            FunctionSignature {
-                param_types: alloc::vec![],
-                return_type: vec_type.clone(),
-                definition_span: Span::default(),
-            },
+            alloc::vec![],
+            vec_type.clone(),
         );
-        self.function_table.insert(
+        register(
             format!("vec_push_{}", suffix),
-            FunctionSignature {
-                param_types: alloc::vec![vec_type.clone(), element_type.clone()],
-                return_type: DataType::Unit,
-                definition_span: Span::default(),
-            },
+            alloc::vec![vec_type.clone(), element_type.clone()],
+            DataType::Unit,
         );
-        self.function_table.insert(
+        register(
             format!("vec_get_{}", suffix),
-            FunctionSignature {
-                param_types: alloc::vec![vec_type.clone(), DataType::I32],
-                return_type: element_type.clone(),
-                definition_span: Span::default(),
-            },
+            alloc::vec![vec_type.clone(), DataType::I32],
+            element_type.clone(),
         );
-        self.function_table.insert(
+        register(
             format!("vec_len_{}", suffix),
-            FunctionSignature {
-                param_types: alloc::vec![vec_type],
-                return_type: DataType::I32,
-                definition_span: Span::default(),
-            },
+            alloc::vec![vec_type],
+            DataType::I32,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn analyzer() -> Analyzer {
+        Analyzer::new()
+    }
+
+    #[test]
+    fn parses_function_types() {
+        let analyzer = analyzer();
+        let ty = analyzer
+            .string_to_type("(i32, string) -> bool", Span::default())
+            .unwrap();
+        match ty {
+            DataType::Function {
+                params,
+                return_type,
+            } => {
+                assert_eq!(params, alloc::vec![DataType::I32, DataType::String]);
+                assert_eq!(*return_type, DataType::Bool);
+            }
+            other => panic!("unexpected type: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_nested_vectors() {
+        let analyzer = analyzer();
+        let ty = analyzer
+            .string_to_type("Vec<Vec<i32>>", Span::default())
+            .unwrap();
+        assert_eq!(
+            ty,
+            DataType::Vector(Box::new(DataType::Vector(Box::new(DataType::I32))))
+        );
+    }
+
+    #[test]
+    fn parses_tuple_types() {
+        let analyzer = analyzer();
+        let ty = analyzer
+            .string_to_type("(i32, (string, bool))", Span::default())
+            .unwrap();
+        assert_eq!(
+            ty,
+            DataType::Tuple(alloc::vec![
+                DataType::I32,
+                DataType::Tuple(alloc::vec![DataType::String, DataType::Bool]),
+            ])
+        );
+    }
+
+    #[test]
+    fn reports_mismatched_parentheses() {
+        let analyzer = analyzer();
+        let err = analyzer
+            .string_to_type("(i32, string", Span::default())
+            .unwrap_err();
+        assert!(matches!(err, LangError::Compile(_)));
     }
 }

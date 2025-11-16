@@ -2,6 +2,6 @@
   "expect": "error",
   "error": {
     "variant": "compile",
-    "message_contains": "Mismatched type for argument 1 of function 'requires_i32'"
+    "message_contains": "No overload of 'requires_i32' matches argument types (string)"
   }
 }

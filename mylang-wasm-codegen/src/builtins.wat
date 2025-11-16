@@ -172,6 +172,342 @@
     local.get $header_ptr
   )
 
+  (func $__f64_to_string (param $value f64) (result i32)
+    (local $int_part i32)
+    (local $fraction f64)
+    (local $has_fraction i32)
+    (local $is_negative i32)
+    (local $int_str_header i32)
+    (local $needs_neg_zero i32)
+    (local $digits_ptr i32)
+    (local $digits_write_ptr i32)
+    (local $digit_count i32)
+    (local $digit_value i32)
+    (local $digit_value_f64 f64)
+    (local $fraction_data_ptr i32)
+    (local $fraction_header i32)
+    (local $fraction_len i32)
+    (local $copy_index i32)
+    (local $tmp_ptr i32)
+
+    local.get $value
+    local.get $value
+    f64.ne
+    if
+      i32.const 3
+      call $__alloc
+      local.set $tmp_ptr
+      local.get $tmp_ptr
+      i32.const 78
+      i32.store8
+      local.get $tmp_ptr
+      i32.const 1
+      i32.add
+      i32.const 97
+      i32.store8
+      local.get $tmp_ptr
+      i32.const 2
+      i32.add
+      i32.const 78
+      i32.store8
+      i32.const 12
+      call $__alloc
+      local.set $fraction_header
+      local.get $fraction_header
+      local.get $tmp_ptr
+      i32.store offset=0
+      local.get $fraction_header
+      i32.const 3
+      i32.store offset=4
+      local.get $fraction_header
+      i32.const 3
+      i32.store offset=8
+      local.get $fraction_header
+      return
+    end
+
+    local.get $value
+    f64.const 2147483647
+    f64.gt
+    if
+      i32.const 3
+      call $__alloc
+      local.set $tmp_ptr
+      local.get $tmp_ptr
+      i32.const 105
+      i32.store8
+      local.get $tmp_ptr
+      i32.const 1
+      i32.add
+      i32.const 110
+      i32.store8
+      local.get $tmp_ptr
+      i32.const 2
+      i32.add
+      i32.const 102
+      i32.store8
+      i32.const 12
+      call $__alloc
+      local.set $fraction_header
+      local.get $fraction_header
+      local.get $tmp_ptr
+      i32.store offset=0
+      local.get $fraction_header
+      i32.const 3
+      i32.store offset=4
+      local.get $fraction_header
+      i32.const 3
+      i32.store offset=8
+      local.get $fraction_header
+      return
+    end
+
+    local.get $value
+    f64.const -2147483648
+    f64.lt
+    if
+      i32.const 4
+      call $__alloc
+      local.set $tmp_ptr
+      local.get $tmp_ptr
+      i32.const 45
+      i32.store8
+      local.get $tmp_ptr
+      i32.const 1
+      i32.add
+      i32.const 105
+      i32.store8
+      local.get $tmp_ptr
+      i32.const 2
+      i32.add
+      i32.const 110
+      i32.store8
+      local.get $tmp_ptr
+      i32.const 3
+      i32.add
+      i32.const 102
+      i32.store8
+      i32.const 12
+      call $__alloc
+      local.set $fraction_header
+      local.get $fraction_header
+      local.get $tmp_ptr
+      i32.store offset=0
+      local.get $fraction_header
+      i32.const 4
+      i32.store offset=4
+      local.get $fraction_header
+      i32.const 4
+      i32.store offset=8
+      local.get $fraction_header
+      return
+    end
+
+    local.get $value
+    f64.const 0
+    f64.lt
+    local.set $is_negative
+
+    local.get $value
+    i32.trunc_f64_s
+    local.set $int_part
+
+    local.get $int_part
+    call $__i32_to_string
+    local.set $int_str_header
+
+    local.get $value
+    local.get $int_part
+    f64.convert_i32_s
+    f64.sub
+    f64.abs
+    local.set $fraction
+
+    local.get $fraction
+    f64.const 0.000001
+    f64.gt
+    local.set $has_fraction
+
+    local.get $is_negative
+    local.get $int_part
+    i32.eqz
+    i32.and
+    local.get $has_fraction
+    i32.and
+    local.set $needs_neg_zero
+
+    local.get $needs_neg_zero
+    if
+      i32.const 2
+      call $__alloc
+      local.set $tmp_ptr
+      local.get $tmp_ptr
+      i32.const 45
+      i32.store8
+      local.get $tmp_ptr
+      i32.const 1
+      i32.add
+      i32.const 48
+      i32.store8
+      i32.const 12
+      call $__alloc
+      local.set $fraction_header
+      local.get $fraction_header
+      local.get $tmp_ptr
+      i32.store offset=0
+      local.get $fraction_header
+      i32.const 2
+      i32.store offset=4
+      local.get $fraction_header
+      i32.const 2
+      i32.store offset=8
+      local.get $fraction_header
+      local.set $int_str_header
+    end
+
+    local.get $has_fraction
+    i32.eqz
+    if
+      local.get $int_str_header
+      return
+    end
+
+    i32.const 16
+    call $__alloc
+    local.set $digits_ptr
+    local.get $digits_ptr
+    local.set $digits_write_ptr
+    i32.const 0
+    local.set $digit_count
+
+    block $frac_done
+      loop $frac_loop
+        local.get $digit_count
+        i32.const 6
+        i32.ge_s
+        br_if $frac_done
+        local.get $fraction
+        f64.const 0.000001
+        f64.lt
+        br_if $frac_done
+        local.get $fraction
+        f64.const 10
+        f64.mul
+        local.set $fraction
+        local.get $fraction
+        f64.floor
+        local.tee $digit_value_f64
+        i32.trunc_f64_s
+        local.set $digit_value
+        local.get $fraction
+        local.get $digit_value_f64
+        f64.sub
+        local.set $fraction
+        local.get $digits_write_ptr
+        local.get $digit_value
+        i32.const 48
+        i32.add
+        i32.store8
+        local.get $digits_write_ptr
+        i32.const 1
+        i32.add
+        local.set $digits_write_ptr
+        local.get $digit_count
+        i32.const 1
+        i32.add
+        local.set $digit_count
+        br $frac_loop
+      end
+    end
+
+    block $trim_done
+      loop $trim_loop
+        local.get $digit_count
+        i32.eqz
+        br_if $trim_done
+        local.get $digits_ptr
+        local.get $digit_count
+        i32.const 1
+        i32.sub
+        i32.add
+        i32.load8_u
+        i32.const 48
+        i32.eq
+        if
+          local.get $digit_count
+          i32.const 1
+          i32.sub
+          local.set $digit_count
+          br $trim_loop
+        end
+        br $trim_done
+      end
+    end
+
+    local.get $digit_count
+    i32.eqz
+    if
+      local.get $int_str_header
+      return
+    end
+
+    local.get $digit_count
+    i32.const 1
+    i32.add
+    local.set $fraction_len
+    local.get $fraction_len
+    call $__alloc
+    local.set $fraction_data_ptr
+
+    local.get $fraction_data_ptr
+    i32.const 46
+    i32.store8
+
+    i32.const 0
+    local.set $copy_index
+
+    block $copy_done
+      loop $copy_loop
+        local.get $copy_index
+        local.get $digit_count
+        i32.ge_s
+        br_if $copy_done
+        local.get $fraction_data_ptr
+        i32.const 1
+        i32.add
+        local.get $copy_index
+        i32.add
+        local.get $digits_ptr
+        local.get $copy_index
+        i32.add
+        i32.load8_u
+        i32.store8
+        local.get $copy_index
+        i32.const 1
+        i32.add
+        local.set $copy_index
+        br $copy_loop
+      end
+    end
+
+    i32.const 12
+    call $__alloc
+    local.set $fraction_header
+    local.get $fraction_header
+    local.get $fraction_data_ptr
+    i32.store offset=0
+    local.get $fraction_header
+    local.get $fraction_len
+    i32.store offset=4
+    local.get $fraction_header
+    local.get $fraction_len
+    i32.store offset=8
+
+    local.get $int_str_header
+    local.get $fraction_header
+    call $__string_concat
+  )
+
   (func $__string_char_at (param $header_ptr i32) (param $index i32) (result i32)
     (local $data_ptr i32) (local $len i32) (local $char_value i32)
     (local $char_data_ptr i32) (local $result_header i32)

@@ -1,0 +1,12 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "add", "params": ["i32", "i32"], "return_type": "i32"},
+    {"name": "add", "params": ["f64", "f64"], "return_type": "f64"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "i32: 30",
+    "f64: 3.75"
+  ]
+}
