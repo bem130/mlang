@@ -82,7 +82,9 @@ fn load_samples(subdir: &str) -> Vec<SampleCase> {
     let mut entries: Vec<_> = fs::read_dir(&dir)
         .unwrap_or_else(|err| panic!("failed to read {:?}: {}", dir, err))
         .filter_map(|entry| {
-            let entry = entry.ok()?;
+            let entry = entry.unwrap_or_else(|err| {
+                panic!("failed to read directory entry in {:?}: {}", dir, err)
+            });
             let path = entry.path();
             if path.extension().map_or(false, |ext| ext == "mlang") {
                 Some(path)
@@ -139,7 +141,9 @@ fn load_multi_file_samples(subdir: &str) -> Vec<MultiFileSampleCase> {
     let mut entries: Vec<_> = fs::read_dir(&dir)
         .unwrap_or_else(|err| panic!("failed to read {:?}: {}", dir, err))
         .filter_map(|entry| {
-            let entry = entry.ok()?;
+            let entry = entry.unwrap_or_else(|err| {
+                panic!("failed to read directory entry in {:?}: {}", dir, err)
+            });
             let path = entry.path();
             if path.is_dir() {
                 Some(path)
@@ -192,7 +196,9 @@ fn collect_mlang_sources(root: &Path) -> Vec<(PathBuf, String)> {
         for entry in fs::read_dir(&dir).unwrap_or_else(|err| {
             panic!("failed to read directory {:?}: {}", dir, err)
         }) {
-            let entry = entry.unwrap();
+            let entry = entry.unwrap_or_else(|err| {
+                panic!("failed to read directory entry in {:?}: {}", dir, err)
+            });
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
@@ -391,12 +397,12 @@ fn multi_file_sample_layout_is_consistent() {
             sample.name
         );
 
-        let mut seen_paths = HashSet::new();
+        let mut seen_paths: HashSet<&Path> = HashSet::new();
         let mut has_entry = false;
         for (rel_path, _) in &sample.files {
             has_entry |= rel_path == &sample.entry;
             assert!(
-                seen_paths.insert(rel_path.clone()),
+                seen_paths.insert(rel_path.as_path()),
                 "duplicate source {:?} found while loading sample {}",
                 rel_path,
                 sample.name
