@@ -1,0 +1,10 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "incr", "params": ["i32"], "return_type": "i32"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "incr(5) = 6"
+  ]
+}

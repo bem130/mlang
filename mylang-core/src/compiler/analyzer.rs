@@ -651,6 +651,7 @@ fn select_overload(
     name: &str,
     candidates: &[FunctionSignature],
     arg_types: &[DataType],
+    typed_args: Option<&[TypedExpr]>,
     span: Span,
 ) -> Result<FunctionSignature, LangError> {
     let mut matches: Vec<FunctionSignature> = Vec::new();
@@ -678,7 +679,46 @@ fn select_overload(
             .zip(arg_types.iter())
             .enumerate()
         {
-            if let Err(reason) = unify_types(expected, actual, &mut substitution) {
+            // If expected is a refinement type and actual is a base type, try to prove
+            // the refinement when we have the concrete argument expression available.
+            if let DataType::Refined { base: exp_base, binder, predicate_id } = expected {
+                if exp_base.core_type() == actual.core_type() {
+                    if let Some(typed_args_slice) = typed_args {
+                        if let Some(arg_expr) = typed_args_slice.get(idx) {
+                            // Support proving for integer literals only for now
+                            if let TypedExprKind::Literal(LiteralValue::I32(val)) = &arg_expr.kind {
+                                // construct a MathAstNode representing `binder == val` and translate it
+                                let equality_node = crate::ast::MathAstNode::InfixOp {
+                                    op: crate::token::Token::EqualsEquals,
+                                    left: Box::new(crate::ast::MathAstNode::Variable(binder.clone(), Default::default())),
+                                    right: Box::new(crate::ast::MathAstNode::Literal(crate::ast::MathLiteral::Int(*val), Default::default())),
+                                    span: Default::default(),
+                                };
+                                let phi_a = crate::smt::constraints_from_math_ast(&equality_node);
+                                let phi_e = crate::smt::constraints_from_math_ast(&analyzer.refinements[*predicate_id]);
+                                // negate phi_e
+                                let neg_phi_e = crate::smt::ConstraintSet { literals: phi_e.literals.iter().map(|lit| match lit { crate::smt::SmtLiteral::Pos(b) => crate::smt::SmtLiteral::Neg(b.clone()), crate::smt::SmtLiteral::Neg(b) => crate::smt::SmtLiteral::Pos(b.clone()) }).collect() };
+                                if crate::smt::implies(&phi_a, &neg_phi_e) {
+                                    // proven, continue without calling unify_types
+                                    continue;
+                                } else {
+                                    rejected = Some(format!(
+                                        "{} rejected: argument {} expected '{}' but found '{}'",
+                                        describe_signature(candidate),
+                                        idx + 1,
+                                        expected,
+                                        actual
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // If we couldn't prove, fallthrough to normal unify which will reject conservatively
+                }
+            }
+
+            if let Err(reason) = unify_types(analyzer, expected, actual, &mut substitution) {
                 rejected = Some(format!(
                     "{} rejected: argument {} {}",
                     describe_signature(candidate),
@@ -853,14 +893,54 @@ pub(crate) fn apply_type_substitution(
 }
 
 fn unify_types(
+    analyzer: &Analyzer,
     expected: &DataType,
     actual: &DataType,
     substitution: &mut BTreeMap<String, DataType>,
 ) -> Result<(), String> {
     match expected {
+        DataType::Refined { base: exp_base, binder: _binder, predicate_id: exp_pid } => {
+            // expected is a refined type <p: Base | phi_exp>
+            // actual must be a refined type with a compatible base and a predicate that implies phi_exp
+            match actual {
+                DataType::Refined { base: act_base, predicate_id: act_pid, .. } => {
+                    // First, unify the bases
+                    unify_types(analyzer, exp_base, act_base, substitution)?;
+                    // Now check that actual's predicate implies expected's predicate using SMT
+                    // If either predicate id is out of range, reject conservatively
+                    let id_a = *act_pid;
+                    let id_e = *exp_pid;
+                    if id_a >= analyzer.refinements.len() || id_e >= analyzer.refinements.len() {
+                        return Err(format!("refinement predicate not found ({} -> {})", id_a, id_e));
+                    }
+                    // translate to constraints and ask SMT
+                    let phi_a = crate::smt::constraints_from_math_ast(&analyzer.refinements[id_a]);
+                    let phi_e = crate::smt::constraints_from_math_ast(&analyzer.refinements[id_e]);
+                    // negate phi_e
+                    let neg_phi_e = crate::smt::ConstraintSet {
+                        literals: phi_e
+                            .literals
+                            .iter()
+                            .map(|lit| match lit {
+                                crate::smt::SmtLiteral::Pos(b) => crate::smt::SmtLiteral::Neg(b.clone()),
+                                crate::smt::SmtLiteral::Neg(b) => crate::smt::SmtLiteral::Pos(b.clone()),
+                            })
+                            .collect(),
+                    };
+                    if crate::smt::implies(&phi_a, &neg_phi_e) {
+                        Ok(())
+                    } else {
+                        Err(format!("refinement predicate '{}' does not imply '{}'", id_a, id_e))
+                    }
+                }
+                // allow passing a refined actual to a base expected (handled below), but if actual is base only,
+                // we cannot prove it satisfies the refinement predicate, so reject conservatively.
+                _ => Err(format!("expected '{}' but found '{}'", expected, actual)),
+            }
+        }
         DataType::TypeVar(name) => unify_type_variable(name, actual, substitution),
         DataType::Vector(inner) => match actual {
-            DataType::Vector(actual_inner) => unify_types(inner, actual_inner, substitution),
+            DataType::Vector(actual_inner) => unify_types(analyzer, inner, actual_inner, substitution),
             _ => Err(format!("expected '{}' but found '{}'", expected, actual)),
         },
         DataType::Tuple(elements) => match actual {
@@ -873,7 +953,7 @@ fn unify_types(
                     ));
                 }
                 for (expected_elem, actual_elem) in elements.iter().zip(actual_elements.iter()) {
-                    unify_types(expected_elem, actual_elem, substitution)?;
+                    unify_types(analyzer, expected_elem, actual_elem, substitution)?;
                 }
                 Ok(())
             }
@@ -895,9 +975,9 @@ fn unify_types(
                     ));
                 }
                 for (expected_param, actual_param) in params.iter().zip(actual_params.iter()) {
-                    unify_types(expected_param, actual_param, substitution)?;
+                    unify_types(analyzer, expected_param, actual_param, substitution)?;
                 }
-                unify_types(return_type, actual_return, substitution)
+                unify_types(analyzer, return_type, actual_return, substitution)
             }
             _ => Err(format!("expected '{}' but found '{}'", expected, actual)),
         },
@@ -969,7 +1049,7 @@ fn resolve_c_style_call<'a>(
         typed_args.push(typed_arg);
     }
     let arg_types: Vec<DataType> = typed_args.iter().map(|arg| arg.data_type.clone()).collect();
-    let signature = select_overload(analyzer, name, &candidates, &arg_types, span)?;
+    let signature = select_overload(analyzer, name, &candidates, &arg_types, Some(&typed_args), span)?;
 
     // 呼び出し元のスライスから、消費した識別子とCStyleArgsの2つ分を進める
     *parts = &parts[2..];
@@ -1022,7 +1102,7 @@ fn resolve_sexp_call_or_variable<'a>(
         let (typed_args, remaining_parts) =
             collect_sexp_call_arguments(analyzer, parts, hoisted_vars)?;
         let arg_types: Vec<DataType> = typed_args.iter().map(|arg| arg.data_type.clone()).collect();
-        let signature = select_overload(analyzer, name, &candidates, &arg_types, span)?;
+        let signature = select_overload(analyzer, name, &candidates, &arg_types, Some(&typed_args), span)?;
         *parts = remaining_parts;
         return Ok(TypedExpr {
             kind: TypedExprKind::FunctionCall {
@@ -1263,8 +1343,9 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
                     *span,
                 )));
             }
-            let op_type = &typed_left.data_type;
-            let (func_name, result_type) = match (op, op_type) {
+            // Use the core/base type (unwrap `Refined`) when selecting operator implementations.
+            let op_core = typed_left.data_type.core_type();
+            let (func_name, result_type) = match (op, &op_core) {
                 (Token::Plus, DataType::I32) => ("i32.add", DataType::I32),
                 (Token::Minus, DataType::I32) => ("i32.sub", DataType::I32),
                 (Token::Star, DataType::I32) => ("i32.mul", DataType::I32),
@@ -1295,7 +1376,7 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
                     return Err(LangError::Compile(CompileError::new(
                         format!(
                             "Operator `{:?}` is not supported for type `{}`",
-                            op, op_type
+                            op, op_core
                         ),
                         *span,
                     )));
@@ -1371,7 +1452,7 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
             }
             let arg_types: Vec<DataType> =
                 typed_args.iter().map(|arg| arg.data_type.clone()).collect();
-            let signature = select_overload(analyzer, &name.0, &candidates, &arg_types, *span)?;
+            let signature = select_overload(analyzer, &name.0, &candidates, &arg_types, Some(&typed_args), *span)?;
             Ok(TypedExpr {
                 kind: TypedExprKind::FunctionCall {
                     name: name.0.clone(),

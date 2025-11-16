@@ -238,10 +238,24 @@ impl WasmGenerator {
 
     pub fn resolve_function_label(&self, name: &str, arg_types: &[DataType]) -> Option<&str> {
         self.function_labels.get(name).and_then(|entries| {
-            entries
-                .iter()
-                .find(|(params, _)| params == arg_types)
-                .map(|(_, label)| label.as_str())
+            entries.iter().find_map(|(params, label)| {
+                if params.len() != arg_types.len() {
+                    return None;
+                }
+                // Compare by core/base type (unwrap `Refined`) so refined params match base args.
+                let mut ok = true;
+                for (p, a) in params.iter().zip(arg_types.iter()) {
+                    if p.core_type() != a.core_type() {
+                        ok = false;
+                        break;
+                    }
+                }
+                if ok {
+                    Some(label.as_str())
+                } else {
+                    None
+                }
+            })
         })
     }
 }
