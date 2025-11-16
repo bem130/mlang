@@ -225,11 +225,7 @@ fn run_wasm(wat: &str, stdin: &[u8]) -> Result<String, Box<dyn std::error::Error
             }
 
             memory
-                .write(
-                    &mut caller,
-                    nread_ptr as usize,
-                    &read_bytes.to_le_bytes(),
-                )
+                .write(&mut caller, nread_ptr as usize, &read_bytes.to_le_bytes())
                 .map_err(|_| Trap::new("pointer out of bounds"))?;
 
             const ERRNO_SUCCESS: i32 = 0;

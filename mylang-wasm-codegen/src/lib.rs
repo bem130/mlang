@@ -23,6 +23,7 @@ pub struct WasmGenerator {
     match_value_locals: BTreeMap<usize, (String, DataType)>,
     tuple_temp_locals: BTreeMap<usize, String>,
     match_tuple_locals: BTreeMap<usize, (String, DataType)>,
+    function_labels: BTreeMap<String, Vec<(Vec<DataType>, String)>>,
     lambdas_buffer: String,
     lambda_count: u32,
 }
@@ -30,7 +31,7 @@ pub struct WasmGenerator {
 impl WasmGenerator {
     /// 新しいWasmGeneratorを生成する。
     pub fn new(
-        _function_table: BTreeMap<String, mylang_core::compiler::FunctionSignature>,
+        _function_table: BTreeMap<String, Vec<mylang_core::compiler::FunctionSignature>>,
         string_headers: BTreeMap<String, (u32, u32)>,
         static_offset: u32,
     ) -> Self {
@@ -42,6 +43,7 @@ impl WasmGenerator {
             match_value_locals: BTreeMap::new(),
             tuple_temp_locals: BTreeMap::new(),
             match_tuple_locals: BTreeMap::new(),
+            function_labels: BTreeMap::new(),
             lambdas_buffer: String::new(),
             lambda_count: 0,
         }
@@ -65,13 +67,21 @@ impl WasmGenerator {
         code_generator::generate_builtin_helpers(self);
 
         for node in ast {
+            if let TypedAstNode::FnDef { name, params, .. } = node {
+                let param_types = params.iter().map(|(_, ty)| ty.clone()).collect::<Vec<_>>();
+                self.register_function_label(name, &param_types);
+            }
+        }
+
+        for node in ast {
             code_generator::generate(self, node)?;
         }
 
         self.wat_buffer.push_str(&self.lambdas_buffer);
 
+        let main_label = self.resolve_function_label("main", &[]).unwrap_or("main");
         self.wat_buffer
-            .push_str("\n  (export \"_start\" (func $main))\n");
+            .push_str(&format!("\n  (export \"_start\" (func ${}))\n", main_label));
         self.wat_buffer.push_str(")\n");
 
         Ok(self.wat_buffer.clone())
@@ -156,6 +166,9 @@ impl WasmGenerator {
             DataType::Unit => "", // Unitは値を返さない
             DataType::Tuple(_) | DataType::Struct(_) | DataType::Enum(_) => "i32",
             DataType::Function { .. } => "i32",
+            DataType::TypeVar(name) => {
+                panic!("Type variable '{}' cannot be lowered in wasm codegen", name)
+            }
         }
     }
 
@@ -211,5 +224,58 @@ impl WasmGenerator {
         self.match_value_locals.clear();
         self.tuple_temp_locals.clear();
         self.match_tuple_locals.clear();
+    }
+
+    pub fn register_function_label(&mut self, name: &str, param_types: &[DataType]) -> String {
+        let mangled = mangle_function_name(name, param_types);
+        self.function_labels
+            .entry(name.to_string())
+            .or_default()
+            .push((param_types.to_vec(), mangled.clone()));
+        mangled
+    }
+
+    pub fn resolve_function_label(&self, name: &str, arg_types: &[DataType]) -> Option<&str> {
+        self.function_labels.get(name).and_then(|entries| {
+            entries
+                .iter()
+                .find(|(params, _)| params == arg_types)
+                .map(|(_, label)| label.as_str())
+        })
+    }
+}
+
+fn mangle_function_name(name: &str, param_types: &[DataType]) -> String {
+    if param_types.is_empty() {
+        return format!("{}__unit", name);
+    }
+    let fragments = param_types
+        .iter()
+        .map(type_mangle_fragment)
+        .collect::<Vec<_>>()
+        .join("__");
+    format!("{}__{}", name, fragments)
+}
+
+fn type_mangle_fragment(data_type: &DataType) -> String {
+    match data_type {
+        DataType::I32 => "i32".to_string(),
+        DataType::F64 => "f64".to_string(),
+        DataType::Bool => "bool".to_string(),
+        DataType::String => "string".to_string(),
+        DataType::Unit => "unit".to_string(),
+        DataType::TypeVar(name) => format!("tvar_{}", name),
+        DataType::Vector(inner) => format!("vec_{}", type_mangle_fragment(inner)),
+        DataType::Tuple(elements) => {
+            let inner = elements
+                .iter()
+                .map(type_mangle_fragment)
+                .collect::<Vec<_>>()
+                .join("_");
+            format!("tuple_{}", inner)
+        }
+        DataType::Struct(name) => format!("struct_{}", name),
+        DataType::Enum(name) => format!("enum_{}", name),
+        DataType::Function { .. } => "fn".to_string(),
     }
 }

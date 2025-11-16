@@ -1,0 +1,9 @@
+fn add |a: i32, b: i32|->i32 $a + b$;
+fn add |a: f64, b: f64|->f64 $a + b$;
+
+fn main | |->() {
+    let sum_i32 add 10 20;
+    let sum_f64 add 1.5 2.25;
+    println(string_concat("i32: ", i32_to_string(sum_i32)));
+    println(string_concat("f64: ", f64_to_string(sum_f64)));
+}

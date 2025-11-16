@@ -3,7 +3,7 @@
 extern crate alloc;
 use crate::ast::*;
 use crate::error::{LangError, ParseError};
-use crate::span::{combine_spans, Span};
+use crate::span::{Span, combine_spans};
 use crate::token::Token;
 use alloc::boxed::Box;
 use alloc::format;

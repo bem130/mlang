@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 /// コード生成に必要な情報をすべて含みます。
 pub struct AnalysisResult {
     pub typed_ast: Vec<TypedAstNode>,
-    pub function_table: BTreeMap<String, FunctionSignature>,
+    pub function_table: BTreeMap<String, Vec<FunctionSignature>>,
     pub string_headers: BTreeMap<String, (u32, u32)>, // (data_offset, header_offset)
     pub static_offset: u32,
 }

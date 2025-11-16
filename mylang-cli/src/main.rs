@@ -6,7 +6,7 @@ use std::{
     process,
 };
 // wasmi 0.51 に合わせたuse文
-use wasmi::{core::Trap, Caller, Engine, Linker, Module, Store};
+use wasmi::{Caller, Engine, Linker, Module, Store, core::Trap};
 
 /// コマンドライン引数を定義するための構造体
 #[derive(Parser, Debug)]
@@ -168,11 +168,7 @@ fn run_wasm(wat_code: &str) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             memory
-                .write(
-                    &mut caller,
-                    nread_ptr as usize,
-                    &read_bytes.to_le_bytes(),
-                )
+                .write(&mut caller, nread_ptr as usize, &read_bytes.to_le_bytes())
                 .map_err(|_| Trap::new("pointer out of bounds"))?;
 
             const ERRNO_SUCCESS: i32 = 0;
