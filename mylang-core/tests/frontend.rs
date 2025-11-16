@@ -532,5 +532,6 @@ fn data_type_to_str(data_type: &DataType) -> String {
                 .join(", ");
             format!("({}) -> {}", params_s, data_type_to_str(return_type))
         }
+        DataType::Refined { base, .. } => data_type_to_str(base),
     }
 }

@@ -374,6 +374,12 @@ pub enum DataType {
         params: Vec<DataType>,
         return_type: Box<DataType>,
     },
+    /// Refined type: `<binder: Base | predicate>`
+    Refined {
+        base: Box<DataType>,
+        binder: String,
+        predicate_id: usize,
+    },
 }
 
 // エラーメッセージで型名を綺麗に表示するためのDisplay実装
@@ -399,6 +405,7 @@ impl fmt::Display for DataType {
             }
             DataType::Struct(name) => write!(f, "{}", name),
             DataType::Enum(name) => write!(f, "{}", name),
+            DataType::Refined { base, binder, predicate_id } => write!(f, "<{}: {} | {}#{}>", binder, base, binder, predicate_id),
             DataType::Function {
                 params,
                 return_type,
@@ -414,6 +421,20 @@ impl fmt::Display for DataType {
                     return_type
                 )
             }
+        }
+    }
+}
+
+impl DataType {
+    /// Return the base (non-refined) type by recursively unwrapping `Refined`.
+    ///
+    /// This is a convenience used throughout the analyzer and codegen when
+    /// refinement annotations should be treated as their underlying base types.
+    pub fn core_type(&self) -> DataType {
+        match self {
+            DataType::Refined { base, .. } => base.core_type(),
+            // All other cases return a clone of self (owned DataType)
+            other => other.clone(),
         }
     }
 }

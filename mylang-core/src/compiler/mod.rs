@@ -32,6 +32,7 @@ pub struct Analyzer {
     pub enum_table: BTreeMap<String, EnumInfo>,
     pub trait_table: BTreeMap<String, TraitInfo>,
     pub impl_table: BTreeMap<String, Vec<TraitImplInfo>>,
+    pub refinements: Vec<MathAstNode>,
     type_param_stack: Vec<String>,
     type_alias_stack: Vec<(String, DataType)>,
 }
@@ -160,6 +161,7 @@ impl Analyzer {
             impl_table: BTreeMap::new(),
             type_param_stack: Vec::new(),
             type_alias_stack: Vec::new(),
+            refinements: Vec::new(),
         };
 
         // printlnが内部的に使用する改行文字を静的領域に事前登録しておく
@@ -797,6 +799,23 @@ impl Analyzer {
 
         if let Some(vector) = self.try_parse_vector_type(s, span)? {
             return Ok(vector);
+        }
+
+        // Special case: placeholder produced by parser for refined types: "__ref_{id}#binder#base"
+        if let Some(rest) = s.strip_prefix("__ref_") {
+            // format: id#binder#base
+            let mut parts = rest.splitn(3, '#');
+            if let (Some(id_str), Some(binder), Some(base)) = (parts.next(), parts.next(), parts.next()) {
+                if let Ok(id) = id_str.parse::<usize>() {
+                    // base may itself be a type string; parse it recursively
+                    let base_ty = self.string_to_type(base, span)?;
+                    return Ok(DataType::Refined {
+                        base: Box::new(base_ty),
+                        binder: binder.to_string(),
+                        predicate_id: id,
+                    });
+                }
+            }
         }
 
         match s {

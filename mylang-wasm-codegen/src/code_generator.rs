@@ -511,7 +511,9 @@ struct TupleLayout {
 }
 
 fn type_size_and_align(data_type: &DataType) -> (u32, u32) {
+    // Unwrap refined types to their base for layout calculations.
     match data_type {
+        DataType::Refined { base, .. } => return type_size_and_align(base),
         DataType::I32
         | DataType::Bool
         | DataType::String
@@ -553,7 +555,8 @@ fn emit_store_for_type(
     generator: &mut WasmGenerator,
     data_type: &DataType,
 ) -> Result<(), LangError> {
-    match data_type {
+    let core = data_type.core_type();
+    match core {
         DataType::F64 => {
             generator.wat_buffer.push_str("    f64.store\n");
         }
@@ -588,7 +591,8 @@ fn emit_load_tuple_field(
             .wat_buffer
             .push_str(&format!("{}i32.add\n", indent));
     }
-    match element_type {
+    let core = element_type.core_type();
+    match core {
         DataType::F64 => {
             generator
                 .wat_buffer
@@ -658,7 +662,8 @@ fn generate_tuple_element_condition(
             }
         }
         TypedPattern::Tuple(subpatterns) => {
-            if let DataType::Tuple(inner_types) = element_type {
+            let element_core = element_type.core_type();
+            if let DataType::Tuple(inner_types) = element_core {
                 if inner_types.len() != subpatterns.len() {
                     return Err(LangError::Compile(CompileError::new(
                         "Tuple pattern length does not match tuple value length",
@@ -707,7 +712,9 @@ fn generate_pattern_condition(
         TypedPattern::Wildcard | TypedPattern::Binding { .. } => {
             generator.wat_buffer.push_str("        i32.const 1\n");
         }
-        TypedPattern::Literal(literal) => match (value_type, literal) {
+        TypedPattern::Literal(literal) => {
+            let value_core = value_type.core_type();
+            match (&value_core, literal) {
             (DataType::I32, LiteralValue::I32(val)) => {
                 generator
                     .wat_buffer
@@ -741,16 +748,18 @@ fn generate_pattern_condition(
                     span,
                 )));
             }
+            }
         },
         TypedPattern::Tuple(elements) => {
-            if let DataType::Tuple(field_types) = value_type {
+            let value_core = value_type.core_type();
+            if let DataType::Tuple(field_types) = value_core {
                 if elements.len() != field_types.len() {
                     return Err(LangError::Compile(CompileError::new(
                         "Tuple pattern length does not match tuple value length",
                         span,
                     )));
                 }
-                let layout = compute_tuple_layout(field_types);
+                let layout = compute_tuple_layout(&field_types);
                 generator.wat_buffer.push_str("        i32.const 1\n");
                 for (index, element_pattern) in elements.iter().enumerate() {
                     generate_tuple_element_condition(
@@ -797,14 +806,15 @@ fn bind_pattern_values(
                 .push_str(&format!("        local.set ${}\n", name.1));
         }
         TypedPattern::Tuple(elements) => {
-            if let DataType::Tuple(field_types) = value_type {
+            let value_core = value_type.core_type();
+            if let DataType::Tuple(field_types) = value_core {
                 if elements.len() != field_types.len() {
                     return Err(LangError::Compile(CompileError::new(
                         "Tuple pattern length does not match tuple value length",
                         span,
                     )));
                 }
-                let layout = compute_tuple_layout(field_types);
+                let layout = compute_tuple_layout(&field_types);
                 for (index, element_pattern) in elements.iter().enumerate() {
                     let field_type = &field_types[index];
                     let offset = layout.offsets[index];

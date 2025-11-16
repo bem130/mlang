@@ -16,6 +16,8 @@ use alloc::vec::Vec;
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
     position: usize,
+    /// Collected refinement predicates parsed from `<binder: Base | $predicate$>`
+    pub refinements: Vec<MathAstNode>,
 }
 
 impl Parser {
@@ -23,6 +25,7 @@ impl Parser {
         Self {
             tokens,
             position: 0,
+            refinements: Vec::new(),
         }
     }
 
@@ -766,6 +769,39 @@ impl Parser {
 
     /// 型シグネチャをパースする。単純な型、ジェネリクス、関数型を扱える。
     fn parse_type(&mut self) -> Result<(String, Span), LangError> {
+        // Support refinement syntax: `<binder: Base | $predicate$>`
+        if self.peek() == Some(&Token::LessThan) {
+            // Tentatively parse `<binder: Base | $predicate$>`
+            let start_span = self.consume(Token::LessThan)?.1;
+            // binder
+            let (binder, binder_span) = self.consume_identifier()?;
+            self.consume(Token::Colon)?;
+            // base type as string
+            let (base_name, _base_span) = self.parse_type()?;
+            // expect pipe and math predicate
+            if self.check_and_consume(Token::Pipe) {
+                // predicate must be a math block starting with `$` ... `$`
+                if self.peek() != Some(&Token::Dollar) {
+                    return Err(ParseError::new("Expected '$' to start refinement predicate", self.peek_span()).into());
+                }
+                // parse math expression
+                self.consume(Token::Dollar)?;
+                let math_node = self.parse_math_expression(0)?;
+                self.consume(Token::Dollar)?;
+                let end_span = self.consume(Token::GreaterThan)?.1;
+                // register predicate and return a placeholder string referencing its index
+                let idx = self.refinements.len();
+                self.refinements.push(math_node);
+                let placeholder = format!("__ref_{}#{}#{}", idx, binder, base_name);
+                return Ok((placeholder, combine_spans(start_span, end_span)));
+            } else {
+                // not a refinement; roll back is difficult but we'll treat as generic '<' parsed earlier
+                // For now, fallthrough to normal handling by constructing the generic-style name
+                let end_span = self.consume(Token::GreaterThan)?.1;
+                let name = format!("<{}:{}>", binder, base_name);
+                return Ok((name, combine_spans(binder_span, end_span)));
+            }
+        }
         let (start_token, start_span) = self
             .peek_full()
             .cloned()

@@ -38,6 +38,7 @@ pub struct ParsedModule {
     pub tokens: Vec<(token::Token, Span)>,
     pub raw_ast: Vec<RawAstNode>,
     pub prepared_ast: Vec<RawAstNode>,
+    pub refinements: Vec<ast::MathAstNode>,
 }
 
 /// IDE向けに字句解析・構文解析・意味解析の全情報をまとめた構造体。
@@ -133,12 +134,15 @@ pub fn prepare_ast(
 /// 字句解析と構文解析の両方を行い、解析結果を返すヘルパー。
 pub fn parse_source(source: &str, is_library: bool) -> Result<ParsedModule, LangError> {
     let tokens = lex_source(source)?;
-    let raw_ast = parse_tokens(&tokens)?;
+    // Use Parser directly so we can collect refinement predicates
+    let mut parser = parser::Parser::new(tokens.to_vec());
+    let raw_ast = parser.parse_toplevel()?;
     let prepared_ast = prepare_ast(&raw_ast, is_library)?;
     Ok(ParsedModule {
         tokens,
         raw_ast,
         prepared_ast,
+        refinements: parser.refinements,
     })
 }
 
@@ -152,6 +156,8 @@ pub fn analyze_source(source: &str, is_library: bool) -> Result<AnalysisResult, 
 pub fn analyze_for_ide(source: &str, is_library: bool) -> Result<IdeAnalysis, LangError> {
     let parsed = parse_source(source, is_library)?;
     let mut analyzer = Analyzer::new();
+    // Transfer parsed refinement predicates into the analyzer for later use
+    analyzer.refinements = parsed.refinements.clone();
     let typed_ast = analyzer.analyze(&parsed.prepared_ast)?;
     let analysis = AnalysisResult {
         typed_ast,

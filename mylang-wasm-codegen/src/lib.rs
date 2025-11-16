@@ -166,6 +166,7 @@ impl WasmGenerator {
             DataType::Unit => "", // Unitは値を返さない
             DataType::Tuple(_) | DataType::Struct(_) | DataType::Enum(_) => "i32",
             DataType::Function { .. } => "i32",
+            DataType::Refined { base, .. } => self.type_to_wat(base),
             DataType::TypeVar(name) => {
                 panic!("Type variable '{}' cannot be lowered in wasm codegen", name)
             }
@@ -277,5 +278,6 @@ fn type_mangle_fragment(data_type: &DataType) -> String {
         DataType::Struct(name) => format!("struct_{}", name),
         DataType::Enum(name) => format!("enum_{}", name),
         DataType::Function { .. } => "fn".to_string(),
+        DataType::Refined { base, .. } => type_mangle_fragment(base),
     }
 }

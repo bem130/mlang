@@ -155,7 +155,7 @@ pub fn analyze_toplevel(
                     )));
                 }
 
-                if typed_body.data_type != return_type_resolved {
+                if !core_equal(&typed_body.data_type, &return_type_resolved) {
                     if return_type_resolved != DataType::Unit {
                         return Err(LangError::Compile(CompileError::new(
                             format!(
@@ -273,7 +273,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
 
             if let Some(RawExprPart::TypeAnnotation(type_name, type_span)) = parts_slice.first() {
                 let expected_type = analyzer.string_to_type(type_name, *type_span)?;
-                if result.data_type != expected_type {
+                if !core_equal(&result.data_type, &expected_type) {
                     return Err(LangError::Compile(CompileError::new(
                         format!(
                             "Type annotation mismatch: expression has type '{}' but is annotated as '{}'",
@@ -381,7 +381,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                         name.1,
                     )));
                 }
-                if entry.data_type != typed_value.data_type {
+                if !core_equal(&entry.data_type, &typed_value.data_type) {
                     return Err(LangError::Compile(CompileError::new(
                         format!(
                             "Type mismatch in assignment to '{}': expected '{}' but found '{}'",
@@ -434,7 +434,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
             let explicit_return_type =
                 analyzer.string_to_type(&raw_return_type.0, raw_return_type.1)?;
 
-            if typed_body.data_type != explicit_return_type {
+            if !core_equal(&typed_body.data_type, &explicit_return_type) {
                 // Unitへの暗黙のドロップを許容
                 if explicit_return_type != DataType::Unit {
                     return Err(LangError::Compile(CompileError::new(
@@ -490,7 +490,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
             span,
         } => {
             let typed_condition = analyze_expr(analyzer, condition)?;
-            if typed_condition.data_type != DataType::Bool {
+            if !core_equal(&typed_condition.data_type, &DataType::Bool) {
                 return Err(LangError::Compile(CompileError::new(
                     format!(
                         "While condition must be a boolean expression, but found type '{}'",
@@ -505,7 +505,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
             analyzer.leave_scope();
             let typed_body = typed_body_result?;
 
-            if typed_body.data_type != DataType::Unit {
+            if !core_equal(&typed_body.data_type, &DataType::Unit) {
                 return Err(LangError::Compile(CompileError::new(
                     format!(
                         "While body must evaluate to '()', but found type '{}'",
@@ -630,6 +630,11 @@ fn describe_signature(signature: &FunctionSignature) -> String {
         "fn {}{}({}) -> {}",
         signature.name, generics, params, signature.return_type
     )
+}
+
+/// Helper to compare two DataTypes by their base/core type (unwrap `Refined`).
+fn core_equal(a: &DataType, b: &DataType) -> bool {
+    a.core_type() == b.core_type()
 }
 
 fn format_argument_types(arg_types: &[DataType]) -> String {
@@ -1142,7 +1147,7 @@ fn analyze_sexp_from_slice<'a>(
         } => {
             *parts = &parts[1..];
             let typed_cond = analyze_expr(analyzer, condition)?;
-            if typed_cond.data_type != DataType::Bool {
+            if !core_equal(&typed_cond.data_type, &DataType::Bool) {
                 return Err(LangError::Compile(CompileError::new(
                     format!(
                         "If condition must be a boolean expression, but found type '{}'",
@@ -1153,7 +1158,7 @@ fn analyze_sexp_from_slice<'a>(
             }
             let typed_then = analyze_expr(analyzer, then_branch)?;
             let typed_else = analyze_expr(analyzer, else_branch)?;
-            if typed_then.data_type != typed_else.data_type {
+            if !core_equal(&typed_then.data_type, &typed_else.data_type) {
                 return Err(LangError::Compile(CompileError::new(
                     format!(
                         "If branches must have the same type, but found '{}' and '{}'",
@@ -1249,7 +1254,7 @@ fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<Type
         } => {
             let typed_left = analyze_math_node(analyzer, left)?;
             let typed_right = analyze_math_node(analyzer, right)?;
-            if typed_left.data_type != typed_right.data_type {
+            if !core_equal(&typed_left.data_type, &typed_right.data_type) {
                 return Err(LangError::Compile(CompileError::new(
                     format!(
                         "Mismatched types for binary operator: `{}` and `{}`",
@@ -1422,7 +1427,7 @@ fn analyze_match_expr(
         let typed_body = body_result?;
 
         if let Some(expected_type) = &result_type {
-            if *expected_type != typed_body.data_type {
+            if !core_equal(expected_type, &typed_body.data_type) {
                 return Err(LangError::Compile(CompileError::new(
                     format!(
                         "Match arms must return the same type, but found '{}' and '{}'",
