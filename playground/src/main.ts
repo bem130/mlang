@@ -1,20 +1,20 @@
 import "./style.css";
 import init, {
   compile_to_wat,
-  run as runProgram,
   StepRunner,
   StepStatus,
 } from "../pkg/mlang_playground.js";
+import { Terminal } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
+import 'xterm/css/xterm.css';
 
 type WasmInit = ReturnType<typeof init>;
 const wasmReady: WasmInit = init();
-const STEP_FUEL = 1000n;
-const STEP_FUEL_DISPLAY = Number(STEP_FUEL);
-const STEP_INTERVAL_MS = 30;
+const STEP_FUEL = 1_000_000n;
+const STEP_INTERVAL_MS = 16;
 
 const sourceInput = document.getElementById("source") as HTMLTextAreaElement;
 const watOutput = document.getElementById("wat") as HTMLTextAreaElement;
-const runOutput = document.getElementById("output") as HTMLTextAreaElement;
 const compileButton = document.getElementById("compile") as HTMLButtonElement;
 const runButton = document.getElementById("run") as HTMLButtonElement;
 const stepStartButton = document.getElementById("step-start") as HTMLButtonElement;
@@ -22,16 +22,68 @@ const stepPauseButton = document.getElementById("step-pause") as HTMLButtonEleme
 const stepStopButton = document.getElementById("step-stop") as HTMLButtonElement;
 const statusElement = document.getElementById("status") as HTMLDivElement;
 const docsLink = document.getElementById("docs-link") as HTMLAnchorElement | null;
+const terminalContainer = document.getElementById("terminal") as HTMLDivElement;
 
 let stepRunner: StepRunner | null = null;
 let stepIntervalId: number | null = null;
+let currentInputBuffer = '';
 
-const DEFAULT_SOURCE = `fn greet(name: string) {
-    println string_concat "Hello, " name;
+const term = new Terminal({
+  cursorBlink: true,
+  convertEol: true,
+  theme: {
+    background: '#1e1e1e',
+    foreground: '#d4d4d4',
+  },
+});
+const fitAddon = new FitAddon();
+term.loadAddon(fitAddon);
+term.open(terminalContainer);
+fitAddon.fit();
+
+window.addEventListener('resize', () => fitAddon.fit());
+
+function writeToTerminal(data: string) {
+  term.write(data.replace(/\n/g, '\r\n'));
 }
 
-fn main() {
-    greet "Web";
+term.onData(e => {
+  if (!stepRunner || stepRunner.is_complete()) {
+    return;
+  }
+  
+  switch (e) {
+    case '\r': // Enter
+      writeToTerminal('\r\n');
+      stepRunner.provide_stdin(currentInputBuffer + '\n');
+      currentInputBuffer = '';
+      resumeStepping();
+      break;
+    case '\u007F': // Backspace
+      if (currentInputBuffer.length > 0) {
+        term.write('\b \b');
+        currentInputBuffer = currentInputBuffer.slice(0, -1);
+      }
+      break;
+    default:
+      if (e >= String.fromCharCode(0x20) && e <= String.fromCharCode(0x7e)) {
+        currentInputBuffer += e;
+        term.write(e);
+      }
+  }
+});
+
+const DEFAULT_SOURCE = `// 正しい構文に修正したコード
+fn greet |name: string|->() {
+    println(string_concat("Hello, ", name));
+}
+
+fn main ||->() {
+    greet("Web");
+
+    println("\\nPlease enter your name:");
+    let name read_line();
+    println(string_concat("Hello from terminal, ", name));
 }
 `;
 
@@ -57,11 +109,9 @@ function formatError(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }
-
   if (typeof error === "string") {
     return error;
   }
-
   try {
     return JSON.stringify(error);
   } catch (_) {
@@ -69,11 +119,8 @@ function formatError(error: unknown): string {
   }
 }
 
-function toggleBusy(button: HTMLButtonElement, isBusy: boolean): void {
-  button.disabled = isBusy;
-}
-
 function updateStepControlState(isRunning: boolean, hasRunner: boolean): void {
+  runButton.disabled = isRunning;
   stepStartButton.disabled = isRunning;
   stepPauseButton.disabled = !hasRunner || !isRunning;
   stepStopButton.disabled = !hasRunner;
@@ -86,27 +133,16 @@ function clearStepTimer(): void {
   }
 }
 
-function disposeStepping(): void {
+function disposeStepping(message?: string, isError = false): void {
   clearStepTimer();
-
   if (stepRunner) {
     stepRunner.free();
     stepRunner = null;
   }
-
   updateStepControlState(false, false);
-}
-
-function resetSteppingState(message?: string, isError = false): void {
-  disposeStepping();
-
   if (message) {
     setStatus(message, isError);
   }
-}
-
-function handleStepError(error: unknown): void {
-  resetSteppingState(`ステップ実行に失敗しました: ${formatError(error)}`, true);
 }
 
 function pumpStep(): void {
@@ -116,103 +152,96 @@ function pumpStep(): void {
 
   try {
     const status = stepRunner.step(STEP_FUEL);
-    runOutput.value = stepRunner.stdout();
+    const stdout = stepRunner.stdout();
+    if (stdout) {
+      writeToTerminal(stdout);
+    }
 
     if (status === StepStatus.Completed) {
+      disposeStepping("実行が完了しました。");
+    } else if (status === StepStatus.AwaitingInput) {
       clearStepTimer();
       updateStepControlState(false, true);
-      setStatus("ステップ実行が完了しました。");
+      setStatus("ターミナルからの入力を待っています...");
+      term.focus();
     }
   } catch (error) {
-    handleStepError(error);
+    disposeStepping(`実行時エラー: ${formatError(error)}`, true);
   }
 }
 
-updateStepControlState(false, false);
+async function startNewRun() {
+  disposeStepping();
+  term.reset();
+  
+  try {
+    await wasmReady;
+
+    // ここを変更: StepRunner.wat() の代わりに compile_to_wat を使う
+    const wat = compile_to_wat(sourceInput.value);
+    watOutput.value = wat;
+
+    stepRunner = new StepRunner(sourceInput.value);
+    resumeStepping();
+  } catch(error) {
+    disposeStepping(`実行開始に失敗しました: ${formatError(error)}`, true);
+  }
+}
+
+function resumeStepping() {
+  if (!stepRunner) return;
+  
+  updateStepControlState(true, true);
+  setStatus("実行中...");
+  
+  if (stepIntervalId === null) {
+    stepIntervalId = window.setInterval(pumpStep, STEP_INTERVAL_MS);
+  }
+  pumpStep();
+}
 
 compileButton.addEventListener("click", async () => {
-  toggleBusy(compileButton, true);
-  setStatus("コンパイラを初期化しています...");
+  compileButton.disabled = true;
+  setStatus("コンパイル中...");
   disposeStepping();
+  term.reset();
 
   try {
     await wasmReady;
     const wat = compile_to_wat(sourceInput.value);
     watOutput.value = wat;
-    setStatus("WATの生成が完了しました。");
+    setStatus("コンパイルが完了しました。");
   } catch (error) {
     setStatus(`コンパイルに失敗しました: ${formatError(error)}`, true);
   } finally {
-    toggleBusy(compileButton, false);
+    compileButton.disabled = false;
   }
 });
 
-runButton.addEventListener("click", async () => {
-  disposeStepping();
-  toggleBusy(runButton, true);
-  setStatus("Wasmを実行しています...");
+runButton.addEventListener("click", startNewRun);
 
-  try {
-    await wasmReady;
-    const result = runProgram(sourceInput.value);
-    const wat = result.wat;
-    const stdout = result.stdout;
-    if (typeof result.free === "function") {
-      result.free();
-    }
-    watOutput.value = wat;
-    runOutput.value = stdout;
-    setStatus("実行が完了しました。");
-  } catch (error) {
-    setStatus(`実行に失敗しました: ${formatError(error)}`, true);
-  } finally {
-    toggleBusy(runButton, false);
-  }
-});
-
-stepStartButton.addEventListener("click", async () => {
-  try {
-    await wasmReady;
-
-    if (stepRunner === null) {
-      stepRunner = new StepRunner(sourceInput.value);
-      watOutput.value = stepRunner.wat();
-      runOutput.value = "";
-    } else if (stepRunner.is_complete()) {
-      stepRunner.reset();
-      runOutput.value = "";
-    }
-
-    updateStepControlState(true, true);
-
-    if (stepIntervalId === null) {
-      stepIntervalId = window.setInterval(pumpStep, STEP_INTERVAL_MS);
-    }
-
-    setStatus(`ステップ実行中です（${STEP_FUEL_DISPLAY}命令ずつ実行）`);
-    pumpStep();
-  } catch (error) {
-    handleStepError(error);
+stepStartButton.addEventListener("click", () => {
+  if (!stepRunner || stepRunner.is_complete()) {
+    startNewRun();
+  } else {
+    resumeStepping();
   }
 });
 
 stepPauseButton.addEventListener("click", () => {
-  if (!stepRunner || stepIntervalId === null) {
-    return;
-  }
-
+  if (!stepRunner || stepIntervalId === null) return;
   clearStepTimer();
   updateStepControlState(false, true);
-  setStatus("ステップ実行を一時停止しました。");
+  setStatus("一時停止しました。");
 });
 
 stepStopButton.addEventListener("click", () => {
   if (!stepRunner) {
-    setStatus("ステップ実行は開始されていません。");
+    setStatus("実行されていません。");
     return;
   }
-
-  resetSteppingState("ステップ実行を停止しました。");
+  disposeStepping("実行を停止しました。");
+  term.reset();
 });
 
 wasmReady
@@ -221,9 +250,8 @@ wasmReady
   })
   .catch((error) => {
     setStatus(`初期化に失敗しました: ${formatError(error)}`, true);
-    compileButton.disabled = true;
-    runButton.disabled = true;
-    stepStartButton.disabled = true;
-    stepPauseButton.disabled = true;
-    stepStopButton.disabled = true;
+    [compileButton, runButton, stepStartButton, stepPauseButton, stepStopButton].forEach(
+      (btn) => (btn.disabled = true)
+    );
   });
+
