@@ -6,6 +6,7 @@ members = [
     "mylang-wasm-codegen",
     "mylang-llvm-codegen",
     "mylang-playground",
+    "mylang-lsp",
 ]
 
 [workspace.dependencies]

@@ -1,4 +1,3 @@
-
 //! RawASTを意味解析・型チェックし、TypedASTに変換するアナライザー。
 
 extern crate alloc;
@@ -217,6 +216,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                     name: (name.0.clone(), unique_name),
                     value: Box::new(typed_value),
                     is_mutable: false,
+                    name_span: name.1,
                 },
                 data_type: DataType::Unit,
                 span: *span,
@@ -239,6 +239,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                     name: (name.0.clone(), unique_name),
                     value: Box::new(typed_value),
                     is_mutable: true,
+                    name_span: name.1,
                 },
                 data_type: DataType::Unit,
                 span: *span,
@@ -260,6 +261,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                 kind: TypedExprKind::LetHoistBinding {
                     name: (name.0.clone(), unique_name),
                     value: Box::new(typed_value),
+                    name_span: name.1,
                 },
                 data_type: DataType::Unit,
                 span: *span,
@@ -327,7 +329,8 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
             let typed_body = analyze_expr(analyzer, lambda_body)?;
             analyzer.leave_scope();
 
-            let explicit_return_type = analyzer.string_to_type(&raw_return_type.0, raw_return_type.1)?;
+            let explicit_return_type =
+                analyzer.string_to_type(&raw_return_type.0, raw_return_type.1)?;
 
             if typed_body.data_type != explicit_return_type {
                 // Unitへの暗黙のドロップを許容
