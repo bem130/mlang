@@ -31,7 +31,7 @@
       "type": "object",
       "title": "mylang",
       "properties": {
-        "mylang.languageServerPath": {
+        "mlang.server.path": {
           "type": "string",
           "default": "mylang-lsp",
           "description": "Path to the mylang language server executable."

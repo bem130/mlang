@@ -50,11 +50,13 @@ cargo test
 ### Language server support
 
 An experimental Language Server Protocol (LSP) implementation is available in the
-`mylang-lsp` crate. It provides diagnostics, go-to-definition, hover tooltips,
-signature help, and semantic highlighting. Start the server with:
+`mylang-lsp` crate. It provides diagnostics, go-to-definition, hover tooltips, and
+semantic highlighting.
+
+First, build the language server executable:
 
 ```bash
-cargo run -p mylang-lsp -- --stdio
+cargo build -p mylang-lsp
 ```
 
 Editors can communicate with the server over standard input/output. A Visual
