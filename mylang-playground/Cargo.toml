@@ -10,5 +10,6 @@ crate-type = ["cdylib", "rlib"]
 wasm-bindgen = "0.2"
 mylang-core = { path = "../mylang-core" }
 mylang-wasm-codegen = { path = "../mylang-wasm-codegen" }
-wasmi = { version = "0.31", default-features = false, features = ["std"] }
+wasmi = { version = "0.51", default-features = false, features = ["std"] }
+wasmi_core = "0.51"
 wat = "1.0"

@@ -1,5 +1,125 @@
-println("Please enter your name:");
-let name read_line();
-let greeting string_concat("Hello, ", name);
-let final_greeting string_concat(greeting, "!");
-println(final_greeting);
+// Conway's Game of Life sample in mylang
+
+println("--- Game of Life (mylang sample) ---");
+
+let width 10;
+let height 10;
+let generations 10;
+
+// current grid: flattened Vec<i32> of size width * height
+let mut current vec_new_i32();
+
+// Initialize with a small glider pattern
+// Alive cells at (1,0), (2,1), (0,2), (1,2), (2,2)
+let mut y 0;
+while $y < height$ {
+    let mut x 0;
+    while $x < width$ {
+        let value
+            if $( (x == 1 && y == 0) ||
+                  (x == 2 && y == 1) ||
+                  (x == 0 && y == 2) ||
+                  (x == 1 && y == 2) ||
+                  (x == 2 && y == 2) )$ {
+                1
+            } else {
+                0
+            };
+        vec_push_i32(current, value);
+        set x $x + 1$;
+    };
+    set y $y + 1$;
+};
+
+let mut gen 0;
+while $gen < generations$ {
+    // --- Print current generation ---
+    let gen_label string_concat("Generation ", i32_to_string(gen));
+    println(gen_label);
+
+    let mut row 0;
+    while $row < height$ {
+        let mut line "";
+        let mut col 0;
+        while $col < width$ {
+            let idx $row * width + col$;
+            let cell vec_get_i32(current, idx);
+            let ch if $cell == 1$ { "#" } else { "." };
+            let new_line string_concat(line, ch);
+            set line new_line;
+            set col $col + 1$;
+        };
+        println(line);
+        set row $row + 1$;
+    };
+
+    println("");
+
+    // --- Compute next generation into `next` ---
+    let mut next vec_new_i32();
+
+    let mut gy 0;
+    while $gy < height$ {
+        let mut gx 0;
+        while $gx < width$ {
+            let mut neighbors 0;
+
+            let mut dy -1;
+            while $dy <= 1$ {
+                let mut dx -1;
+                while $dx <= 1$ {
+                    let is_center $dy == 0 && dx == 0$;
+                    if is_center {
+                        // skip self
+                    } else {
+                        let ny $gy + dy$;
+                        let nx $gx + dx$;
+                        let in_bounds $ny >= 0 && ny < height && nx >= 0 && nx < width$;
+                        if in_bounds {
+                            let n_idx $ny * width + nx$;
+                            let n_cell vec_get_i32(current, n_idx);
+                            if $n_cell == 1$ {
+                                set neighbors $neighbors + 1$;
+                            } else {
+                                // do nothing
+                            };
+                        } else {
+                            // out-of-bounds cells are treated as dead
+                        };
+                    };
+                    set dx $dx + 1$;
+                };
+                set dy $dy + 1$;
+            };
+
+            let self_idx $gy * width + gx$;
+            let self_cell vec_get_i32(current, self_idx);
+
+            // Apply Game of Life rules
+            let next_value
+                if $self_cell == 1$ {
+                    // Live cell
+                    if $neighbors == 2 || neighbors == 3$ {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    // Dead cell
+                    if $neighbors == 3$ {
+                        1
+                    } else {
+                        0
+                    }
+                };
+
+            vec_push_i32(next, next_value);
+            set gx $gx + 1$;
+        };
+        set gy $gy + 1$;
+    };
+
+    // Move to next generation
+    set current next;
+    set gen $gen + 1$;
+};

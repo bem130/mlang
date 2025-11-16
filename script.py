@@ -67,6 +67,9 @@ if __name__ == '__main__':
     merge_directory_files('./mylang-core', './tmp/core.txt')
     merge_directory_files('./mylang-wasm-codegen', './tmp/wasm-codegen.txt')
     merge_directory_files('./mylang-llvm-codegen', './tmp/llvm-codegen.txt')
+    merge_directory_files('./mylang-lsp', './tmp/lsp.txt')
+    merge_directory_files('./mylang-playground', './tmp/mylang-playground.txt')
+    merge_directory_files('./playground/src', './tmp/playground.txt')
 
     # 例2: ./tests/samples ディレクトリを samples.txt にまとめる
     merge_directory_files('./tests/samples', './tmp/samples.txt')
