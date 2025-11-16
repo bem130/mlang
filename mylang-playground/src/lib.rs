@@ -5,6 +5,7 @@ use wasmi::{
     Caller, Config, Engine, Instance, Linker, Module, Store, TypedFunc,
     core::{Trap, TrapCode},
 };
+const AWAIT_STDIN_TRAP_MSG: &str = "Awaiting Stdin";
 
 struct HostState {
     stdout: Vec<u8>,
