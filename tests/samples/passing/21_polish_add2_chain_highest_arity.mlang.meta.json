@@ -1,0 +1,26 @@
+{
+  "expect": "ok",
+  "functions": [
+    { "name": "add2", "params": ["i32", "i32"], "return_type": "i32" },
+    { "name": "add2", "params": ["i32", "i32", "i32"], "return_type": "i32" },
+    { "name": "add2", "params": ["i32", "i32", "i32", "i32"], "return_type": "i32" },
+    { "name": "main", "params": [], "return_type": "unit" }
+  ],
+  "stdout": [
+    "--- polish add2 chain highest-arity test start ---",
+    "a2 = 3",
+    "a3 = 6",
+    "a4 = 10",
+    "chain5 = 15",
+    "chain6 = 21",
+    "chain7 = 28",
+    "c_chain5 = 15",
+    "c_chain6 = 21",
+    "c_chain7 = 28",
+    "v3 = 25",
+    "v4 = 28",
+    "v5 = 128",
+    "c_v5 = 128",
+    "--- polish add2 chain highest-arity test end ---"
+  ]
+}

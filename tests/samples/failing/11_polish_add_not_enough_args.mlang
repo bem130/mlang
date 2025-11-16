@@ -1,0 +1,16 @@
+// tests/samples/failing/polish_add_not_enough_args.mlang
+// Polish 記法で、add の引数が不足しているケースをテストする。
+// 期待するのは「引数不足」のコンパイルエラー。
+
+fn add |a: i32, b: i32|->i32 {
+    $a + b$
+}
+
+fn main {
+    // add のアリティは 2 なのに、全体として 3 つの式しかない:
+    //   add add 1 1
+    //
+    // 解析の途中でどこかの add 呼び出しが
+    // 「2個必要なのに1個しかない」状態になり、エラーになるはず。
+    let result add add 1 1;
+}

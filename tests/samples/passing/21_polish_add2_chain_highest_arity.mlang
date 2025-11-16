@@ -1,0 +1,162 @@
+// tests/samples/passing/polish_add2_chain_highest_arity.mlang
+//
+// add2 が 2, 3, 4 引数オーバーロードを持つ場合に、
+// Polish 記法で「最も引数が多いオーバーロードから順番に試す」ルールで
+// 左結合的なチェーンが正しく解釈されることを総合的にテストする。
+//
+// 想定ルール（S-style / Polish）:
+//
+//   - 利用可能なアリティ集合 A = {2, 3, 4} （本ファイルでは add2 のオーバーロード）
+//   - 引数列 args = [x1, x2, x3, ..., xn] について、繰り返し:
+//       1. 現在の長さ m = len(args)
+//       2. m 以下のアリティの中で最大のもの k を選ぶ（k = max { a ∈ A | a <= m })
+//       3. 先頭 k 個で add2 を 1 回呼び出し、結果 r を得る
+//       4. 残りの配列 tail (m - k 個) を取り、
+//          新しい配列を [r, tail[0], tail[1], ...] に置き換える
+//   - 配列の長さが 1 になったらそれが最終結果
+//
+// 具体例:
+//   A = {2, 3, 4}
+//
+//   add2 1 2 3 4 5
+//   args = [1,2,3,4,5], m=5 → k=4
+//     r1 = add2(1,2,3,4) = 10
+//     args = [10,5] (m=2) → k=2
+//     r2 = add2(10,5) = 15
+//     args = [15] → 終了、結果 15
+//
+//   add2 1 2 3 4 5 6
+//   args = [1,2,3,4,5,6], m=6 → k=4
+//     r1 = add2(1,2,3,4) = 10
+//     args = [10,5,6], m=3 → k=3
+//     r2 = add2(10,5,6) = 21
+//     args = [21] → 終了、結果 21
+//
+//   add2 1 2 3 4 5 6 7
+//   args = [1,2,3,4,5,6,7], m=7 → k=4
+//     r1 = add2(1,2,3,4) = 10
+//     args = [10,5,6,7], m=4 → k=4
+//     r2 = add2(10,5,6,7) = 28
+//     args = [28] → 終了、結果 28
+//
+// このテストでは、上記の計算結果（15, 21, 28）になっているかを確認する。
+
+fn add2 |a: i32, b: i32|->i32 {
+    $a + b$
+}
+
+fn add2 |a: i32, b: i32, c: i32|->i32 {
+    $a + b + c$
+}
+
+fn add2 |a: i32, b: i32, c: i32, d: i32|->i32 {
+    $a + b + c + d$
+}
+
+fn main {
+    println("--- polish add2 chain highest-arity test start ---");
+
+    // 1. ベース確認: 各アリティを単独で使う ----------------------------------
+    let a2 add2 1 2;          // = 1 + 2               = 3
+    let a3 add2 1 2 3;        // = 1 + 2 + 3           = 6
+    let a4 add2 1 2 3 4;      // = 1 + 2 + 3 + 4       = 10
+
+    println(string_concat("a2 = ", i32_to_string(a2)));
+    println(string_concat("a3 = ", i32_to_string(a3)));
+    println(string_concat("a4 = ", i32_to_string(a4)));
+
+    // 2. S-style チェーン（リテラルのみ） ------------------------------------
+    // 2-1) 5 個の引数: add2 1 2 3 4 5
+    //
+    //   r1 = add2(1,2,3,4) = 10
+    //   r2 = add2(10,5)    = 15
+    //
+    // 期待: 15
+    let chain5 add2 1 2 3 4 5;
+    println(string_concat("chain5 = ", i32_to_string(chain5)));
+
+    // 2-2) 6 個の引数: add2 1 2 3 4 5 6
+    //
+    //   r1 = add2(1,2,3,4) = 10
+    //   r2 = add2(10,5,6)  = 21
+    //
+    // 期待: 21
+    let chain6 add2 1 2 3 4 5 6;
+    println(string_concat("chain6 = ", i32_to_string(chain6)));
+
+    // 2-3) 7 個の引数: add2 1 2 3 4 5 6 7
+    //
+    //   r1 = add2(1,2,3,4) = 10
+    //   r2 = add2(10,5,6,7)= 28
+    //
+    // 期待: 28
+    let chain7 add2 1 2 3 4 5 6 7;
+    println(string_concat("chain7 = ", i32_to_string(chain7)));
+
+    // 3. C-style のネストと S-style の結果が一致するか ------------------------
+    //
+    // C-style で明示的にネストしたものと、S-style チェーンの結果を比較する。
+
+    // C-style 版（5 個）:
+    //   c_chain5 = add2(add2(1,2,3,4), 5)
+    //            = add2(10, 5)
+    //            = 15
+    let c_chain5 add2(add2(1, 2, 3, 4), 5);
+    println(string_concat("c_chain5 = ", i32_to_string(c_chain5)));
+
+    // C-style 版（6 個）:
+    //   c_chain6 = add2(add2(1,2,3,4), 5, 6)
+    //            = add2(10, 5, 6)
+    //            = 21
+    let c_chain6 add2(add2(1, 2, 3, 4), 5, 6);
+    println(string_concat("c_chain6 = ", i32_to_string(c_chain6)));
+
+    // C-style 版（7 個）:
+    //   c_chain7 = add2(add2(1,2,3,4), 5, 6, 7)
+    //            = add2(10, 5, 6, 7)
+    //            = 28
+    let c_chain7 add2(add2(1, 2, 3, 4), 5, 6, 7);
+    println(string_concat("c_chain7 = ", i32_to_string(c_chain7)));
+
+    // 4. 変数を交えたチェーン ------------------------------------------------
+    //
+    // x = 10, y = 20, z = -5, w = 3 として、
+    //   add2 x y z
+    //   add2 x y z w
+    //   add2 x y z w 100
+    // のような混在ケースもテストする。
+
+    let x 10;
+    let y 20;
+    let z -5;
+    let w 3;
+
+    // 4-1) 3 引数: add2(x, y, z) = 10 + 20 - 5 = 25
+    let v3 add2 x y z;
+    println(string_concat("v3 = ", i32_to_string(v3)));
+
+    // 4-2) 4 引数: add2(x, y, z, w) = 10 + 20 - 5 + 3 = 28
+    let v4 add2 x y z w;
+    println(string_concat("v4 = ", i32_to_string(v4)));
+
+    // 4-3) 5 引数: add2 x y z w 100
+    //
+    // args = [10,20,-5,3,100]
+    //   r1 = add2(10,20,-5,3) = 28
+    //   r2 = add2(28,100)     = 128
+    //
+    // 期待: 128
+    let v5 add2 x y z w 100;
+    println(string_concat("v5 = ", i32_to_string(v5)));
+
+    // 5. C-style で同じことをしたときと結果が一致するか ----------------------
+    //
+    // C-style:
+    //   c_v5 = add2(add2(x, y, z, w), 100)
+    //        = add2(28, 100)
+    //        = 128
+    let c_v5 add2(add2(x, y, z, w), 100);
+    println(string_concat("c_v5 = ", i32_to_string(c_v5)));
+
+    println("--- polish add2 chain highest-arity test end ---");
+}

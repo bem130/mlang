@@ -1,0 +1,126 @@
+// tests/samples/passing/polish_add.mlang
+// Polish 記法（前置記法）での関数呼び出しが、
+// 関数のアリティ(引数の個数)に従って正しくグルーピングされることを総合的にテストする。
+// - 単純な add 呼び出し
+// - ネストした add チェーン (add add 1 2 3 など)
+// - 3 段以上のネスト
+// - 変数を交えた Polish チェーン
+// - 別の 2 引数関数 mul との組み合わせ
+// - 引数位置の違い (add 1 mul 2 3 vs add mul 2 3 4 など)
+
+fn add |a: i32, b: i32|->i32 {
+    $a + b$
+}
+
+fn mul |a: i32, b: i32|->i32 {
+    $a * b$
+}
+
+fn main {
+    println("--- polish add test start ---");
+
+    // 1. 基本: 通常の math 風呼び出し
+    let a add 1 2; // = 3
+    println(string_concat("a = ", i32_to_string(a)));
+
+    // 2. ネスト 1 段:
+    //   add add 1 2 3
+    // = add (add 1 2) 3
+    // = add 3 3
+    // = 6
+    let b add add 1 2 3; // = 6
+    println(string_concat("b = ", i32_to_string(b)));
+
+    // 3. ネスト 2 段:
+    //   add add add 1 1 1 1
+    //
+    // 内側から:
+    //   add 1 1           = 2
+    //   add (add 1 1) 1   = add 2 1 = 3
+    //   add (前の結果) 1  = add 3 1 = 4
+    //
+    // = add (add (add 1 1) 1) 1
+    let c add add add 1 1 1 1; // = 4
+    println(string_concat("c = ", i32_to_string(c)));
+
+    // 4. 変数を交えた Polish チェーン:
+    //
+    //   let base 10;
+    //   add add base 5 1
+    //
+    // = add (add base 5) 1
+    // = add (10 + 5) 1
+    // = add 15 1
+    // = 16
+    let base 10;
+    let d add add base 5 1; // = 16
+    println(string_concat("d = ", i32_to_string(d)));
+
+    // 5. 別の 2 引数関数 mul との組み合わせ:
+    //
+    //   add mul 2 3 4
+    //
+    // トップレベルの add は 2 引数関数:
+    //   第 1 引数: mul 2 3 = 6
+    //   第 2 引数: 4
+    // => add 6 4 = 10
+    let e add mul 2 3 4; // = 10
+    println(string_concat("e = ", i32_to_string(e)));
+
+    // 6. 引数の位置違いテスト:
+    //
+    //   add 1 mul 2 3
+    //
+    // トップレベルの add の 2 引数:
+    //   第 1 引数: 1
+    //   第 2 引数: mul 2 3 = 6
+    // => add 1 6 = 7
+    let f add 1 mul 2 3; // = 7
+    println(string_concat("f = ", i32_to_string(f)));
+
+    // 7. より複雑なネスト:
+    //
+    //   add add 1 mul 2 3 4
+    //
+    // 最外の add の 2 引数:
+    //   第 1 引数: 「add 1 mul 2 3」の結果
+    //   第 2 引数: 4
+    //
+    // まず内側の add:
+    //   add 1 mul 2 3
+    // = add 1 (mul 2 3)
+    // = add 1 6
+    // = 7
+    //
+    // したがって全体は:
+    // = add 7 4
+    // = 11
+    let g add add 1 mul 2 3 4; // = 11
+    println(string_concat("g = ", i32_to_string(g)));
+
+    // 8. 変数・複合式を混ぜたケース:
+    //
+    //   h1 = add a b
+    //   h2 = add add a b c
+    //   h3 = add mul a b add c d
+    //
+    // それぞれ:
+    //   a = 3, b = 6, c = 4, d = 10
+    //
+    //   h1 = add a b           = 3 + 6 = 9
+    //   h2 = add add a b c     = add (add a b) c
+    //                         = add 9 4 = 13
+    //   h3 = add mul a b add c d
+    //      = add (mul a b) (add c d)
+    //      = add (3 * 6) (4 + 10)
+    //      = add 18 14
+    //      = 32
+    let h1 add a b;                 // a=3, b=6 => 9
+    let h2 add add a b c;           // => 13
+    let h3 add mul a b add c d;     // => 32
+    println(string_concat("h1 = ", i32_to_string(h1)));
+    println(string_concat("h2 = ", i32_to_string(h2)));
+    println(string_concat("h3 = ", i32_to_string(h3)));
+
+    println("--- polish add test end ---");
+}

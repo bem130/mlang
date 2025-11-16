@@ -1016,8 +1016,48 @@ fn collect_sexp_call_arguments<'a>(
     parts: &mut &'a [RawExprPart],
     hoisted_vars: &BTreeSet<String>,
 ) -> Result<(Vec<TypedExpr>, &'a [RawExprPart]), LangError> {
+    // 1. 先頭の関数名を取得
     let mut cursor = *parts;
+    // fallback: 通常のグリーディ分割
     let mut typed_args = Vec::new();
+    if let Some(RawExprPart::Token(Token::Identifier(func_name), _)) = cursor.first() {
+        // 2. 関数の引数数（アリティ）を調べる
+        let arity = analyzer
+            .function_table
+            .get(func_name)
+            .and_then(|cands| cands.first().map(|sig| sig.param_types.len()))
+            .unwrap_or(1);
+        cursor = &cursor[1..]; // 関数名消費
+        // 3. アリティ分だけ引数を左から取得
+        for _ in 0..arity {
+            if cursor.is_empty() || matches!(cursor.first(), Some(RawExprPart::TypeAnnotation(_, _))) {
+                break;
+            }
+            let arg = analyze_sexp_from_slice(analyzer, &mut cursor, hoisted_vars)?;
+            typed_args.push(arg);
+        }
+        // 4. 余った部分があれば、左結合でネスト
+        if !cursor.is_empty() && !matches!(cursor.first(), Some(RawExprPart::TypeAnnotation(_, _))) {
+            let (mut rest_args, rest_cursor) = collect_sexp_call_arguments(analyzer, &mut cursor, hoisted_vars)?;
+            // 左結合: 直前の呼び出し結果をrest_argsの先頭に挿入
+            if !rest_args.is_empty() {
+                let left = TypedExpr {
+                    kind: TypedExprKind::FunctionCall {
+                        name: func_name.clone(),
+                        args: typed_args,
+                    },
+                    data_type: DataType::Unit, // 型は後でresolve_sexp_call_or_variableで上書きされる
+                    span: Default::default(),
+                };
+                rest_args.insert(0, left);
+                *parts = rest_cursor;
+                return Ok((rest_args, rest_cursor));
+            }
+        }
+        *parts = cursor;
+        return Ok((typed_args, cursor));
+    }
+    // fallback: 通常のグリーディ分割
     while let Some(part) = cursor.first() {
         if matches!(part, RawExprPart::TypeAnnotation(_, _)) {
             break;
@@ -1025,6 +1065,7 @@ fn collect_sexp_call_arguments<'a>(
         let typed_arg = analyze_sexp_from_slice(analyzer, &mut cursor, hoisted_vars)?;
         typed_args.push(typed_arg);
     }
+    *parts = cursor;
     Ok((typed_args, cursor))
 }
 

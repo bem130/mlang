@@ -1,0 +1,69 @@
+// tests/samples/passing/polish_add2_overloads.mlang
+// add2 が 2, 3, 4 引数オーバーロードを持つ場合に、
+// C-style / S-style (Polish) 両方で正しく解決されることをテストする。
+// ここでは S 式について「1つの S 式 = 1回の関数呼び出し」とし、
+// アリティが複数ある関数では自動ネストを行わない前提のテストにしている。
+
+fn add2 |a: i32, b: i32|->i32 {
+    $a + b$
+}
+
+fn add2 |a: i32, b: i32, c: i32|->i32 {
+    $a + b + c$
+}
+
+fn add2 |a: i32, b: i32, c: i32, d: i32|->i32 {
+    $a + b + c + d$
+}
+
+fn main {
+    println("--- polish add2 overload test start ---");
+
+    // 1. C-style 呼び出し（括弧付き）でのオーバーロード解決
+    //    2 引数
+    let c2 add2(1, 2);          // = 3
+    println(string_concat("c2 = ", i32_to_string(c2)));
+
+    //    3 引数
+    let c3 add2(1, 2, 3);       // = 6
+    println(string_concat("c3 = ", i32_to_string(c3)));
+
+    //    4 引数
+    let c4 add2(1, 2, 3, 4);    // = 10
+    println(string_concat("c4 = ", i32_to_string(c4)));
+
+    // 2. S-style (Polish) 呼び出しでのオーバーロード解決
+    //    2 引数版
+    //    add2 1 2  -> add2(1, 2)
+    let s2 add2 1 2;            // = 3
+    println(string_concat("s2 = ", i32_to_string(s2)));
+
+    //    3 引数版
+    //    add2 1 2 3 -> add2(1, 2, 3)
+    let s3 add2 1 2 3;          // = 6
+    println(string_concat("s3 = ", i32_to_string(s3)));
+
+    //    4 引数版
+    //    add2 1 2 3 4 -> add2(1, 2, 3, 4)
+    let s4 add2 1 2 3 4;        // = 10
+    println(string_concat("s4 = ", i32_to_string(s4)));
+
+    // 3. 変数を交えたケース
+    //    x = 10, y = 20, z = 30
+    //    add2 x y        -> 30
+    //    add2 x y z      -> 60
+    //    add2 x y z 40   -> 100
+    let x 10;
+    let y 20;
+    let z 30;
+
+    let v2 add2 x y;            // = 30
+    let v3 add2 x y z;          // = 60
+    let v4 add2 x y z 40;       // = 100
+
+    println(string_concat("v2 = ", i32_to_string(v2)));
+    println(string_concat("v3 = ", i32_to_string(v3)));
+    println(string_concat("v4 = ", i32_to_string(v4)));
+
+    println("--- polish add2 overload test end ---");
+}

@@ -1,0 +1,22 @@
+{
+  "expect": "ok",
+  "functions": [
+    { "name": "add2", "params": ["i32", "i32"], "return_type": "i32" },
+    { "name": "add2", "params": ["i32", "i32", "i32"], "return_type": "i32" },
+    { "name": "add2", "params": ["i32", "i32", "i32", "i32"], "return_type": "i32" },
+    { "name": "main", "params": [], "return_type": "unit" }
+  ],
+  "stdout": [
+    "--- polish add2 overload test start ---",
+    "c2 = 3",
+    "c3 = 6",
+    "c4 = 10",
+    "s2 = 3",
+    "s3 = 6",
+    "s4 = 10",
+    "v2 = 30",
+    "v3 = 60",
+    "v4 = 100",
+    "--- polish add2 overload test end ---"
+  ]
+}

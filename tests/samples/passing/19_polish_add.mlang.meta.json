@@ -1,0 +1,22 @@
+{
+  "expect": "ok",
+  "functions": [
+    { "name": "add",  "params": ["i32", "i32"], "return_type": "i32" },
+    { "name": "mul",  "params": ["i32", "i32"], "return_type": "i32" },
+    { "name": "main", "params": [],             "return_type": "unit" }
+  ],
+  "stdout": [
+    "--- polish add test start ---",
+    "a = 3",
+    "b = 6",
+    "c = 4",
+    "d = 16",
+    "e = 10",
+    "f = 7",
+    "g = 11",
+    "h1 = 9",
+    "h2 = 13",
+    "h3 = 32",
+    "--- polish add test end ---"
+  ]
+}
