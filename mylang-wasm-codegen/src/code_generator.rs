@@ -59,7 +59,10 @@ pub fn generate(generator: &mut WasmGenerator, node: &TypedAstNode) -> Result<()
 
             generator.wat_buffer.push_str("  )\n");
         }
-        TypedAstNode::StructDef { .. } | TypedAstNode::EnumDef { .. } => {}
+        TypedAstNode::StructDef { .. }
+        | TypedAstNode::EnumDef { .. }
+        | TypedAstNode::TraitDef { .. }
+        | TypedAstNode::ImplDef { .. } => {}
     }
     Ok(())
 }

@@ -235,6 +235,9 @@ fn compute_token_length(token: &Token, span: Span, text: &str, line_index: &Line
         Token::While => 5,
         Token::Struct => 6,
         Token::Enum => 4,
+        Token::Trait => 5,
+        Token::Impl => 4,
+        Token::For => 3,
         Token::Match => 5,
         Token::True => 4,
         Token::False => 5,
@@ -982,7 +985,15 @@ fn format_signature_label(name: &str, signature: &FunctionSignature) -> String {
         .map(|ty| ty.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    format!("fn {}({}) -> {}", name, params, signature.return_type)
+    let generics = if signature.type_params.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", signature.type_params.join(", "))
+    };
+    format!(
+        "fn {}{}({}) -> {}",
+        name, generics, params, signature.return_type
+    )
 }
 
 enum Frame {

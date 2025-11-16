@@ -40,7 +40,21 @@ pub enum RawAstNode {
     // let hoist束縛（自己再帰関数用）
     LetHoist {
         name: (String, Span),
+        type_params: Vec<RawTypeParam>,
         value: Box<RawAstNode>,
+        span: Span,
+    },
+    TraitDef {
+        name: (String, Span),
+        type_params: Vec<RawTypeParam>,
+        methods: Vec<RawTraitMethod>,
+        span: Span,
+    },
+    ImplDef {
+        trait_name: (String, Span),
+        trait_args: Vec<(String, Span)>,
+        self_type: (String, Span),
+        methods: Vec<RawTraitMethod>,
         span: Span,
     },
     // 代入 (set 識別子 式)
@@ -96,6 +110,28 @@ pub struct RawEnumVariant {
 pub struct RawMatchArm {
     pub pattern: RawPattern,
     pub body: Box<RawAstNode>,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct RawTraitBound {
+    pub trait_name: (String, Span),
+    pub trait_args: Vec<(String, Span)>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct RawTypeParam {
+    pub name: (String, Span),
+    pub bounds: Vec<RawTraitBound>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct RawTraitMethod {
+    pub name: (String, Span),
+    pub type_params: Vec<RawTypeParam>,
+    pub params: Vec<((String, Span), (String, Span))>,
+    pub return_type: (String, Span),
+    pub body: Option<Box<RawAstNode>>,
     pub span: Span,
 }
 
@@ -213,6 +249,17 @@ pub enum TypedAstNode {
     EnumDef {
         name: String,
         variants: Vec<TypedEnumVariant>,
+        span: Span,
+    },
+    TraitDef {
+        name: String,
+        type_params: Vec<String>,
+        span: Span,
+    },
+    ImplDef {
+        trait_name: String,
+        trait_args: Vec<DataType>,
+        self_type: DataType,
         span: Span,
     },
     // 将来的にトップレベルの`const`などもここに追加できる
@@ -381,6 +428,8 @@ impl RawAstNode {
             RawAstNode::Let { span, .. } => *span,
             RawAstNode::LetMut { span, .. } => *span,
             RawAstNode::LetHoist { span, .. } => *span,
+            RawAstNode::TraitDef { span, .. } => *span,
+            RawAstNode::ImplDef { span, .. } => *span,
             RawAstNode::Set { span, .. } => *span,
             RawAstNode::Lambda { span, .. } => *span,
             RawAstNode::Block { span, .. } => *span,

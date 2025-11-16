@@ -1,0 +1,10 @@
+trait Numeric {
+    fn zero | |->Self;
+}
+
+fn require_numeric<T: Numeric> |value: T|->T value;
+
+fn main | |->() {
+    let text "hello";
+    require_numeric text;
+};

@@ -1,4 +1,5 @@
 use mylang_core::analyze_source;
+use mylang_core::ast::{DataType, TypedAstNode, TypedExpr, TypedExprKind};
 use mylang_core::error::LangError;
 
 // 新仕様に合わせてテストを書き直す必要あり
@@ -236,6 +237,171 @@ fn kind |x: i32|->i32 {
         "unexpected error message: {}",
         compile_err.message
     );
+}
+
+#[test]
+fn generic_function_signature_is_registered() {
+    let source = r#"
+fn identity<T> |x: T|->T x;
+fn main | |->() () ;
+"#;
+
+    let analysis = analyze_source(source, true).expect("analysis should succeed");
+    let signatures = analysis
+        .function_table
+        .get("identity")
+        .expect("identity should be registered");
+    assert_eq!(signatures.len(), 1);
+    let signature = &signatures[0];
+    assert_eq!(signature.type_params, vec!["T".to_string()]);
+    assert_eq!(
+        signature.param_types,
+        vec![DataType::TypeVar("T".to_string())]
+    );
+    assert_eq!(signature.return_type, DataType::TypeVar("T".to_string()));
+}
+
+#[test]
+fn generic_function_calls_infer_argument_types() {
+    let source = r#"
+fn identity<T> |x: T|->T x;
+fn main | |->() {
+    let a identity 42;
+    let b identity "hello";
+    ()
+};
+"#;
+
+    let analysis = analyze_source(source, true).expect("analysis should succeed");
+    let main_body = find_function_body(&analysis.typed_ast, "main");
+    let TypedExprKind::Block { statements } = &main_body.kind else {
+        panic!("main should be a block");
+    };
+
+    let mut call_types = Vec::new();
+    for stmt in statements {
+        if let TypedExprKind::LetBinding { value, .. } = &stmt.kind {
+            if let TypedExprKind::FunctionCall { name, .. } = &value.kind {
+                if name == "identity" {
+                    call_types.push(value.data_type.clone());
+                }
+            }
+        }
+    }
+
+    assert_eq!(call_types, vec![DataType::I32, DataType::String]);
+}
+
+#[test]
+fn mismatched_generic_arguments_report_error() {
+    let source = r#"
+fn pick_first<T> |a: T, b: T|->T a;
+fn main | |->() {
+    pick_first 1 "oops";
+};
+"#;
+
+    let err = match analyze_source(source, true) {
+        Ok(_) => panic!("analysis should fail"),
+        Err(err) => err,
+    };
+    let LangError::Compile(compile_err) = err else {
+        panic!("expected compile error");
+    };
+    assert!(
+        compile_err
+            .message
+            .contains("No overload of 'pick_first' matches argument types"),
+        "unexpected error message: {}",
+        compile_err.message
+    );
+    assert!(
+        compile_err
+            .notes
+            .iter()
+            .any(|(note, _)| note.contains("type variable 'T'")),
+        "expected inference note, got {:?}",
+        compile_err.notes
+    );
+}
+
+#[test]
+fn trait_bounds_attach_to_function_signatures() {
+    let source = r#"
+trait Numeric {
+    fn identity |x: Self|->Self;
+}
+
+impl Numeric for i32 {
+    fn identity |x: Self|->Self x;
+}
+
+fn use_numeric<T: Numeric> |value: T|->T value;
+
+fn main | |->() {
+    let result use_numeric 42;
+    ()
+};
+"#;
+
+    let analysis = analyze_source(source, true).expect("analysis should succeed");
+    let signature = analysis
+        .function_table
+        .get("use_numeric")
+        .and_then(|list| list.first())
+        .expect("use_numeric signature present");
+    assert_eq!(signature.type_params, vec!["T".to_string()]);
+    assert_eq!(signature.trait_bounds.len(), 1);
+    let bound = &signature.trait_bounds[0];
+    assert_eq!(bound.type_param, "T");
+    assert_eq!(bound.trait_name, "Numeric");
+    assert!(bound.trait_args.is_empty());
+
+    assert!(analysis.typed_ast.iter().any(
+        |node| matches!(node, TypedAstNode::ImplDef { trait_name, .. } if trait_name == "Numeric")
+    ));
+}
+
+#[test]
+fn missing_trait_impl_is_reported() {
+    let source = r#"
+trait Numeric {
+    fn identity |x: Self|->Self;
+}
+
+fn use_numeric<T: Numeric> |value: T|->T value;
+
+fn main | |->() {
+    let text "missing";
+    use_numeric text;
+};
+"#;
+
+    let err = match analyze_source(source, true) {
+        Ok(_) => panic!("analysis should fail"),
+        Err(err) => err,
+    };
+    let LangError::Compile(compile_err) = err else {
+        panic!("expected compile error");
+    };
+    assert!(
+        compile_err
+            .notes
+            .iter()
+            .any(|(note, _)| note.contains("does not implement Numeric")),
+        "unexpected notes: {:?}",
+        compile_err.notes
+    );
+}
+
+fn find_function_body<'a>(nodes: &'a [TypedAstNode], target: &str) -> &'a TypedExpr {
+    nodes
+        .iter()
+        .find_map(|node| match node {
+            TypedAstNode::FnDef { name, body, .. } if name == target => Some(body),
+            _ => None,
+        })
+        .expect("function should exist")
 }
 
 // #[test]

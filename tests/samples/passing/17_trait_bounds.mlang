@@ -1,0 +1,12 @@
+trait Numeric {
+    fn zero | |->Self;
+}
+
+impl Numeric for i32 {
+    fn zero | |->Self 0;
+}
+
+fn main | |->() {
+    let start Numeric::zero();
+    ()
+};
