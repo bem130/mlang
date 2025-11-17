@@ -1,0 +1,49 @@
+// tests/samples/passing/22_call_style_mix.mlang
+
+fn add |a: i32, b: i32|->i32 {
+    $a + b$
+}
+
+fn main {
+    println("--- Call Style Mix Test ---");
+
+    // 1. Polish Style (P-style)
+    // `add add 1 2 3` は `add(add(1, 2), 3)` と解釈される -> 6
+    let p_style1 add add 1 2 3;
+    println(string_concat("P-style 1: ", i32_to_string(p_style1)));
+
+    // 2. S-expression Group Style (S-style)
+    // `add (add 1 2) 3` は `add(3, 3)` と解釈される -> 6
+    let s_style1 add (add 1 2) 3;
+    println(string_concat("S-style 1: ", i32_to_string(s_style1)));
+
+    // 3. C-style
+    // `add(add(1,2),3)` は `add(3, 3)` と解釈される -> 6
+    let c_style1 add(add(1,2),3);
+    println(string_concat("C-style 1: ", i32_to_string(c_style1)));
+
+    // 4. Mixed Styles
+    // `add (add 1 2) add(3, 4)` は `add(3, 7)` と解釈される -> 10
+    let mixed1 add (add 1 2) add(3, 4);
+    println(string_concat("Mixed 1: ", i32_to_string(mixed1)));
+
+    // `add add add(1, 2) 3 4` は `add(add(add(1,2), 3), 4)` と左結合で解釈される
+    //   - 内側: add(1, 2) -> 3
+    //   - 中間: add 3 3 -> 6
+    //   - 外側: add 6 4 -> 10
+    let mixed2 add add add(1, 2) 3 4;
+    println(string_concat("Mixed 2: ", i32_to_string(mixed2)));
+    
+    // 5. With Type Annotations (Analyzer check)
+    // 型注釈はコンパイル時にチェックされるが、実行時の動作は変わらない
+    let p_style_typed add add 1:i32 2:i32 3:i32;
+    println(string_concat("P-style typed: ", i32_to_string(p_style_typed)));
+
+    let s_style_typed add (add 1:i32 2:i32):i32 3:i32;
+    println(string_concat("S-style typed: ", i32_to_string(s_style_typed)));
+    
+    let c_style_typed add(add(1:i32, 2:i32):i32, 3:i32):i32;
+    println(string_concat("C-style typed: ", i32_to_string(c_style_typed)));
+
+    println("--- Test Finished ---");
+}

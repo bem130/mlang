@@ -1,0 +1,19 @@
+{
+  "expect": "ok",
+  "functions": [
+    { "name": "add", "params": ["i32", "i32"], "return_type": "i32" },
+    { "name": "main", "params": [], "return_type": "unit" }
+  ],
+  "stdout": [
+    "--- Call Style Mix Test ---",
+    "P-style 1: 6",
+    "S-style 1: 6",
+    "C-style 1: 6",
+    "Mixed 1: 10",
+    "Mixed 2: 10",
+    "P-style typed: 6",
+    "S-style typed: 6",
+    "C-style typed: 6",
+    "--- Test Finished ---"
+  ]
+}

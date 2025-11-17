@@ -1,0 +1,6 @@
+// tests/samples/failing/12_invalid_call_mix.mlang
+fn add |a: i32, b: i32|->i32 $a + b$;
+
+// C-style呼び出しは完結した式であるため、
+// 後続の `3` は予期せぬトークンとしてエラーになるべき
+add(1, 2) 3;

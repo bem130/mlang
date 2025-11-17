@@ -16,7 +16,7 @@ fn mul |a: i32, b: i32|->i32 {
     $a * b$
 }
 
-fn main {
+fn main ||->() {
     println("--- polish add test start ---");
 
     // 1. 基本: 通常の math 風呼び出し

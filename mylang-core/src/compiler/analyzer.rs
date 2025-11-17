@@ -286,12 +286,6 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
             }
 
             if !parts_slice.is_empty() {
-                if let TypedExprKind::VariableRef { name, .. } = &result.kind {
-                    return Err(LangError::Compile(CompileError::new(
-                        format!("Variable '{}' cannot be called as a function", name),
-                        result.span,
-                    )));
-                }
                 return Err(LangError::Compile(CompileError::new(
                     "Unexpected tokens after expression",
                     parts_slice[0].span(),
@@ -555,7 +549,7 @@ fn analyze_statement_with_hoisting(
             // ... (analyze_exprからコピー)
             if let Some(RawExprPart::TypeAnnotation(type_name, type_span)) = parts_slice.first() {
                 let expected_type = analyzer.string_to_type(type_name, *type_span)?;
-                if result.data_type != expected_type {
+                if !core_equal(&result.data_type, &expected_type) {
                     return Err(LangError::Compile(CompileError::new(
                         format!(
                             "Type annotation mismatch: expression has type '{}' but is annotated as '{}'",
@@ -567,12 +561,6 @@ fn analyze_statement_with_hoisting(
                 parts_slice = &parts_slice[1..];
             }
             if !parts_slice.is_empty() {
-                if let TypedExprKind::VariableRef { name, .. } = &result.kind {
-                    return Err(LangError::Compile(CompileError::new(
-                        format!("Variable '{}' cannot be called as a function", name),
-                        result.span,
-                    )));
-                }
                 return Err(LangError::Compile(CompileError::new(
                     "Unexpected tokens after expression",
                     parts_slice[0].span(),
@@ -982,7 +970,7 @@ fn unify_types(
             _ => Err(format!("expected '{}' but found '{}'", expected, actual)),
         },
         _ => {
-            if expected == actual {
+            if core_equal(expected, actual) {
                 Ok(())
             } else {
                 Err(format!("expected '{}' but found '{}'", expected, actual))
@@ -997,7 +985,7 @@ fn unify_type_variable(
     substitution: &mut BTreeMap<String, DataType>,
 ) -> Result<(), String> {
     if let Some(bound) = substitution.get(name) {
-        if bound == actual {
+        if core_equal(bound, actual) {
             Ok(())
         } else {
             Err(format!(
@@ -1009,64 +997,6 @@ fn unify_type_variable(
         substitution.insert(name.to_string(), actual.clone());
         Ok(())
     }
-}
-
-fn collect_sexp_call_arguments<'a>(
-    analyzer: &mut Analyzer,
-    parts: &mut &'a [RawExprPart],
-    hoisted_vars: &BTreeSet<String>,
-) -> Result<(Vec<TypedExpr>, &'a [RawExprPart]), LangError> {
-    // 1. 先頭の関数名を取得
-    let mut cursor = *parts;
-    // fallback: 通常のグリーディ分割
-    let mut typed_args = Vec::new();
-    if let Some(RawExprPart::Token(Token::Identifier(func_name), _)) = cursor.first() {
-        // 2. 関数の引数数（アリティ）を調べる
-        let arity = analyzer
-            .function_table
-            .get(func_name)
-            .and_then(|cands| cands.first().map(|sig| sig.param_types.len()))
-            .unwrap_or(1);
-        cursor = &cursor[1..]; // 関数名消費
-        // 3. アリティ分だけ引数を左から取得
-        for _ in 0..arity {
-            if cursor.is_empty() || matches!(cursor.first(), Some(RawExprPart::TypeAnnotation(_, _))) {
-                break;
-            }
-            let arg = analyze_sexp_from_slice(analyzer, &mut cursor, hoisted_vars)?;
-            typed_args.push(arg);
-        }
-        // 4. 余った部分があれば、左結合でネスト
-        if !cursor.is_empty() && !matches!(cursor.first(), Some(RawExprPart::TypeAnnotation(_, _))) {
-            let (mut rest_args, rest_cursor) = collect_sexp_call_arguments(analyzer, &mut cursor, hoisted_vars)?;
-            // 左結合: 直前の呼び出し結果をrest_argsの先頭に挿入
-            if !rest_args.is_empty() {
-                let left = TypedExpr {
-                    kind: TypedExprKind::FunctionCall {
-                        name: func_name.clone(),
-                        args: typed_args,
-                    },
-                    data_type: DataType::Unit, // 型は後でresolve_sexp_call_or_variableで上書きされる
-                    span: Default::default(),
-                };
-                rest_args.insert(0, left);
-                *parts = rest_cursor;
-                return Ok((rest_args, rest_cursor));
-            }
-        }
-        *parts = cursor;
-        return Ok((typed_args, cursor));
-    }
-    // fallback: 通常のグリーディ分割
-    while let Some(part) = cursor.first() {
-        if matches!(part, RawExprPart::TypeAnnotation(_, _)) {
-            break;
-        }
-        let typed_arg = analyze_sexp_from_slice(analyzer, &mut cursor, hoisted_vars)?;
-        typed_args.push(typed_arg);
-    }
-    *parts = cursor;
-    Ok((typed_args, cursor))
 }
 
 /// `f(...)` 形式のC-style関数呼び出しを解決する。
@@ -1105,69 +1035,145 @@ fn resolve_c_style_call<'a>(
     })
 }
 
-/// S式 `f ...` または変数参照 `f` を解決する。
-fn resolve_sexp_call_or_variable<'a>(
-    analyzer: &mut Analyzer,
-    name: &str,
-    span: crate::span::Span,
-    parts: &mut &'a [RawExprPart],
-    hoisted_vars: &BTreeSet<String>,
-) -> Result<TypedExpr, LangError> {
-    // 呼び出し元のスライスから、消費した識別子1つ分を進める
-    *parts = &parts[1..];
+/// S式の解析中にスタックに積まれる値。評価済みの式か、未解決の関数名を表す。
+enum SexpStackVal {
+    Expr(TypedExpr),
+    Fn(String, Span),
+}
 
-    // 1. 変数として解決できるか試す
-    let variable_entry = analyzer.find_variable(name);
-    if hoisted_vars.contains(name) || variable_entry.is_some() {
-        if let Some(entry) = variable_entry {
-            return Ok(TypedExpr {
-                kind: TypedExprKind::VariableRef {
-                    name: entry.original_name.clone(),
-                    unique_name: entry.unique_name.clone(),
-                },
-                data_type: entry.data_type.clone(),
-                span,
-            });
+/// スタックベースの縮約アルゴリズムを用いて、ポーランド記法の式を解決する。
+fn reduce_polish_notation_stack(
+    analyzer: &mut Analyzer,
+    mut stack: Vec<SexpStackVal>,
+) -> Result<TypedExpr, LangError> {
+    // スタックに複数の要素が残っている限り、縮約を試みる
+    while stack.len() > 1 {
+        let mut reducible_idx = None;
+        // スタックを右から左にスキャンし、最初に縮約可能な「関数 + 引数」の組を探す
+        for i in (0..stack.len()).rev() {
+            if let SexpStackVal::Fn(name, _) = &stack[i] {
+                if let Some(candidates) = analyzer.function_table.get(name).cloned() {
+                    let max_arity = candidates.iter().map(|c| c.param_types.len()).max().unwrap_or(0);
+                    if i + max_arity < stack.len() {
+                        // 後続の要素がすべて評価済みの式(Expr)であることを確認
+                        let all_args_are_exprs = (i + 1..=i + max_arity)
+                            .all(|j| matches!(stack.get(j), Some(SexpStackVal::Expr(_))));
+                        if all_args_are_exprs {
+                            reducible_idx = Some(i);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(idx) = reducible_idx {
+            let (name, span) = match &stack[idx] {
+                SexpStackVal::Fn(name, span) => (name.clone(), *span),
+                _ => unreachable!(),
+            };
+
+            let candidates = analyzer.function_table.get(&name).cloned().unwrap();
+            let args_slice = &stack[idx + 1..];
+            let mut best_match: Option<(FunctionSignature, usize)> = None;
+
+            // アリティが最も大きい（＝最も多くの引数を消費する）オーバーロードから試す
+            'outer: for arity in (1..=args_slice.len()).rev() {
+                 if candidates.iter().any(|c| c.param_types.len() == arity) {
+                    let mut typed_args = Vec::new();
+                    let mut arg_types = Vec::new();
+                    for val in &args_slice[..arity] {
+                        if let SexpStackVal::Expr(expr) = val {
+                            typed_args.push(expr.clone());
+                            arg_types.push(expr.data_type.clone());
+                        } else {
+                            // 引数部分に関数名が来てしまった場合は、このアリティではマッチしない
+                            continue 'outer;
+                        }
+                    }
+                    if let Ok(signature) = select_overload(analyzer, &name, &candidates, &arg_types, Some(&typed_args), span) {
+                        best_match = Some((signature, arity));
+                        break;
+                    }
+                }
+            }
+
+            if let Some((signature, arity)) = best_match {
+                let args: Vec<TypedExpr> = (idx + 1..=idx + arity)
+                    .map(|j| match &stack[j] {
+                        SexpStackVal::Expr(expr) => expr.clone(),
+                        _ => unreachable!(),
+                    })
+                    .collect();
+                
+                let call_expr = TypedExpr {
+                    kind: TypedExprKind::FunctionCall { name, args },
+                    data_type: signature.return_type,
+                    span,
+                };
+                
+                // スタックの関数と引数を、評価後の式で置き換える
+                stack.splice(idx..=idx + arity, [SexpStackVal::Expr(call_expr)]);
+            } else {
+                 return Err(LangError::Compile(CompileError::new(
+                    format!("Not enough arguments for function '{}'", name),
+                    span,
+                )));
+            }
         } else {
-            return Err(LangError::Compile(CompileError::new(
-                format!(
-                    "Cannot read local variable '{}' in its own initializer",
-                    name
-                ),
-                span,
-            )));
+            // これ以上縮約できないのに、スタックに複数の要素が残っている場合はエラー
+            let first_fn = stack.iter().find_map(|v| match v {
+                SexpStackVal::Fn(name, span) => Some((name.clone(), *span)),
+                _ => None
+            });
+            if let Some((name, span)) = first_fn {
+                return Err(LangError::Compile(CompileError::new(
+                    format!("Could not resolve call to function '{}' with available arguments", name),
+                    span,
+                )));
+            } else {
+                 return Err(LangError::Compile(CompileError::new(
+                    "Invalid expression sequence: expression does not resolve to a single value",
+                    span_of_stack(&stack),
+                )));
+            }
         }
     }
-    // 2. 関数として解決できるか試す
-    if let Some(candidates) = analyzer.function_table.get(name).cloned() {
-        let (typed_args, remaining_parts) =
-            collect_sexp_call_arguments(analyzer, parts, hoisted_vars)?;
-        let arg_types: Vec<DataType> = typed_args.iter().map(|arg| arg.data_type.clone()).collect();
-        let signature = select_overload(analyzer, name, &candidates, &arg_types, Some(&typed_args), span)?;
-        *parts = remaining_parts;
-        return Ok(TypedExpr {
-            kind: TypedExprKind::FunctionCall {
-                name: name.to_string(),
-                args: typed_args,
-            },
-            data_type: signature.return_type.clone(),
-            span,
-        });
+
+    // 最終的にスタックに残った単一の式が、S式全体の結果
+    if let Some(SexpStackVal::Expr(final_expr)) = stack.pop() {
+        Ok(final_expr)
+    } else {
+        Err(LangError::Compile(CompileError::new(
+            "Expression did not resolve to a single value",
+            span_of_stack(&stack),
+        )))
     }
-    // 3. どちらでもない場合は未定義エラー
-    Err(LangError::Compile(CompileError::new(
-        format!("Undefined function or variable '{}'", name),
-        span,
-    )))
+}
+
+fn span_of_stack(stack: &[SexpStackVal]) -> Span {
+    let first = stack.first().map(|v| match v {
+        SexpStackVal::Expr(e) => e.span,
+        SexpStackVal::Fn(_, s) => *s,
+    });
+    let last = stack.last().map(|v| match v {
+        SexpStackVal::Expr(e) => e.span,
+        SexpStackVal::Fn(_, s) => *s,
+    });
+    if let (Some(start), Some(end)) = (first, last) {
+        crate::span::combine_spans(start, end)
+    } else {
+        Span::default()
+    }
 }
 
 /// RawExprPartのスライスから一つの意味のある式(TypedExpr)を解析する。
 /// この関数はアナライザーの心臓部であり、パーサーが作った未解決の構造を解釈する。
-/// 解析が成功すると、消費した分だけ入力スライスを進め、結果のTypedExprを返す。
+/// ポーランド記法（S式）の解析にはスタックベースの縮約アルゴリズムを使用する。
 fn analyze_sexp_from_slice<'a>(
     analyzer: &mut Analyzer,
     parts: &mut &'a [RawExprPart],
-    hoisted_vars: &BTreeSet<String>,
+    _hoisted_vars: &BTreeSet<String>,
 ) -> Result<TypedExpr, LangError> {
     if parts.is_empty() {
         return Err(LangError::Compile(CompileError::new(
@@ -1176,117 +1182,139 @@ fn analyze_sexp_from_slice<'a>(
         )));
     }
 
-    let first_part = &parts[0];
+    // C-style `f(...)` は不可分な1単位として扱い、即座に評価する
+    if let (Some(RawExprPart::Token(Token::Identifier(name), span)), Some(RawExprPart::CStyleArgs(arg_nodes, _))) = (parts.get(0), parts.get(1)) {
+        let mut temp_slice = &parts[..];
+        let result = resolve_c_style_call(analyzer, name, *span, arg_nodes, &mut temp_slice)?;
+        *parts = temp_slice;
+        return Ok(result);
+    }
+    
+    // S式全体を評価するためのスタックを準備
+    let mut stack: Vec<SexpStackVal> = Vec::new();
+    let mut current_parts = *parts;
 
-    match first_part {
-        RawExprPart::Token(Token::Identifier(name), span) => {
-            // C-style `f(...)`呼び出しかどうかをチェック
-            if let Some(RawExprPart::CStyleArgs(arg_nodes, _)) = parts.get(1) {
-                resolve_c_style_call(analyzer, name, *span, arg_nodes, parts)
-            } else {
-                resolve_sexp_call_or_variable(analyzer, name, *span, parts, hoisted_vars)
-            }
-        }
-        RawExprPart::Token(token, span) => {
-            *parts = &parts[1..]; // トークンを消費
-            match token {
-                Token::IntLiteral(val) => Ok(TypedExpr {
-                    kind: TypedExprKind::Literal(LiteralValue::I32(*val)),
-                    data_type: DataType::I32,
-                    span: *span,
-                }),
-                Token::FloatLiteral(val) => Ok(TypedExpr {
-                    kind: TypedExprKind::Literal(LiteralValue::F64(*val)),
-                    data_type: DataType::F64,
-                    span: *span,
-                }),
-                Token::True => Ok(TypedExpr {
-                    kind: TypedExprKind::Literal(LiteralValue::Bool(true)),
-                    data_type: DataType::Bool,
-                    span: *span,
-                }),
-                Token::False => Ok(TypedExpr {
-                    kind: TypedExprKind::Literal(LiteralValue::Bool(false)),
-                    data_type: DataType::Bool,
-                    span: *span,
-                }),
-                Token::StringLiteral(s) => {
-                    let header_offset = analyzer.ensure_string_is_statically_allocated(s);
-                    Ok(TypedExpr {
-                        kind: TypedExprKind::StringLiteral { header_offset },
-                        data_type: DataType::String,
+    // S式を構成する全ての部分式を評価し、スタックに積む
+    while !current_parts.is_empty() {
+        match &current_parts[0] {
+            RawExprPart::Token(Token::Identifier(name), span) => {
+                // 変数か関数かをこの時点では決定せず、種類に応じてスタックに積む
+                if analyzer.function_table.contains_key(name) {
+                    stack.push(SexpStackVal::Fn(name.clone(), *span));
+                } else if let Some(entry) = analyzer.find_variable(name) {
+                     stack.push(SexpStackVal::Expr(TypedExpr {
+                        kind: TypedExprKind::VariableRef {
+                            name: entry.original_name.clone(),
+                            unique_name: entry.unique_name.clone(),
+                        },
+                        data_type: entry.data_type.clone(),
                         span: *span,
-                    })
+                    }));
+                } else {
+                     return Err(LangError::Compile(CompileError::new(
+                        format!("Undefined function or variable '{}'", name),
+                        *span,
+                    )));
                 }
-                _ => Err(LangError::Compile(CompileError::new(
-                    format!(
-                        "This token cannot be the start of an expression: {:?}",
-                        token
-                    ),
-                    *span,
-                ))),
+                current_parts = &current_parts[1..];
             }
-        }
-        RawExprPart::TupleLiteral(elements, span) => {
-            *parts = &parts[1..];
-            let mut typed_elements = Vec::new();
-            let mut element_types = Vec::new();
-            for element in elements {
-                let typed_element = analyze_expr(analyzer, element)?;
-                element_types.push(typed_element.data_type.clone());
-                typed_elements.push(typed_element);
+            RawExprPart::Token(token, span) => {
+                // リテラルは評価済みの式としてスタックに積む
+                let expr = match token {
+                    Token::IntLiteral(val) => TypedExpr {
+                        kind: TypedExprKind::Literal(LiteralValue::I32(*val)),
+                        data_type: DataType::I32, span: *span,
+                    },
+                    Token::FloatLiteral(val) => TypedExpr {
+                        kind: TypedExprKind::Literal(LiteralValue::F64(*val)),
+                        data_type: DataType::F64, span: *span,
+                    },
+                    Token::StringLiteral(s) => {
+                         let header_offset = analyzer.ensure_string_is_statically_allocated(s);
+                         TypedExpr {
+                            kind: TypedExprKind::StringLiteral { header_offset },
+                            data_type: DataType::String, span: *span,
+                        }
+                    },
+                    Token::True => TypedExpr {
+                        kind: TypedExprKind::Literal(LiteralValue::Bool(true)),
+                        data_type: DataType::Bool, span: *span,
+                    },
+                    Token::False => TypedExpr {
+                        kind: TypedExprKind::Literal(LiteralValue::Bool(false)),
+                        data_type: DataType::Bool, span: *span,
+                    },
+                    _ => return Err(LangError::Compile(CompileError::new("Unexpected token", *span))),
+                };
+                stack.push(SexpStackVal::Expr(expr));
+                current_parts = &current_parts[1..];
             }
-            Ok(TypedExpr {
-                kind: TypedExprKind::TupleLiteral {
-                    elements: typed_elements,
-                },
-                data_type: DataType::Tuple(element_types),
-                span: *span,
-            })
-        }
-        RawExprPart::MathBlock(math_node, _) => {
-            *parts = &parts[1..];
-            analyze_math_node(analyzer, math_node)
-        }
-        RawExprPart::Group(inner_parts, _) => {
-            *parts = &parts[1..];
-            let mut inner_slice = &inner_parts[..];
-            let result = analyze_sexp_from_slice(analyzer, &mut inner_slice, &BTreeSet::new())?; // Group内は別スコープ
-            if !inner_slice.is_empty() {
-                return Err(LangError::Compile(CompileError::new(
-                    "Unexpected tokens after expression in group",
-                    inner_slice[0].span(),
-                )));
+            RawExprPart::Group(inner_parts, _) => {
+                let mut inner_slice = &inner_parts[..];
+                // グループ内を再帰的に解決し、結果の式をスタックに積む
+                let group_expr = analyze_sexp_from_slice(analyzer, &mut inner_slice, &BTreeSet::new())?;
+                stack.push(SexpStackVal::Expr(group_expr));
+                current_parts = &current_parts[1..];
             }
-            Ok(result)
+            RawExprPart::CStyleArgs(..) => {
+                // C-style呼び出しは先頭でのみ処理されるため、ここに来ることはない
+                 return Err(LangError::Compile(CompileError::new("Unexpected C-style argument list", current_parts[0].span())));
+            }
+            RawExprPart::MathBlock(math, _) => {
+                let math_expr = analyze_math_node(analyzer, math)?;
+                stack.push(SexpStackVal::Expr(math_expr));
+                current_parts = &current_parts[1..];
+            }
+            RawExprPart::IfExpr{..} | RawExprPart::MatchExpr{..} | RawExprPart::Lambda{..} => {
+                 let mut temp_slice = &current_parts[..];
+                 let complex_expr = analyze_complex_part(analyzer, &mut temp_slice)?;
+                 stack.push(SexpStackVal::Expr(complex_expr));
+                 current_parts = temp_slice;
+            }
+            RawExprPart::TypeAnnotation(_, _) => {
+                 // 型注釈は式の終わりを示すため、ループを抜ける
+                 break;
+            }
+             RawExprPart::TupleLiteral(elements, span) => {
+                 let mut typed_elements = Vec::new();
+                 let mut element_types = Vec::new();
+                 for element in elements {
+                     let typed_element = analyze_expr(analyzer, element)?;
+                     element_types.push(typed_element.data_type.clone());
+                     typed_elements.push(typed_element);
+                 }
+                 let tuple_expr = TypedExpr {
+                     kind: TypedExprKind::TupleLiteral { elements: typed_elements },
+                     data_type: DataType::Tuple(element_types),
+                     span: *span,
+                 };
+                 stack.push(SexpStackVal::Expr(tuple_expr));
+                 current_parts = &current_parts[1..];
+             }
         }
-        RawExprPart::IfExpr {
-            condition,
-            then_branch,
-            else_branch,
-            span,
-        } => {
-            *parts = &parts[1..];
+    }
+    
+    *parts = current_parts;
+    reduce_polish_notation_stack(analyzer, stack)
+}
+
+/// if, match, lambdaなどの不可分な複雑な部分式を評価するヘルパー
+fn analyze_complex_part<'a>(
+    analyzer: &mut Analyzer,
+    parts: &mut &'a [RawExprPart],
+) -> Result<TypedExpr, LangError> {
+    let part = &parts[0];
+    *parts = &parts[1..]; // この部分式を消費する
+    match part {
+         RawExprPart::IfExpr { condition, then_branch, else_branch, span } => {
             let typed_cond = analyze_expr(analyzer, condition)?;
             if !core_equal(&typed_cond.data_type, &DataType::Bool) {
-                return Err(LangError::Compile(CompileError::new(
-                    format!(
-                        "If condition must be a boolean expression, but found type '{}'",
-                        typed_cond.data_type
-                    ),
-                    typed_cond.span,
-                )));
+                return Err(LangError::Compile(CompileError::new(format!("If condition must be a boolean expression, but found type '{}'", typed_cond.data_type), typed_cond.span)));
             }
             let typed_then = analyze_expr(analyzer, then_branch)?;
             let typed_else = analyze_expr(analyzer, else_branch)?;
             if !core_equal(&typed_then.data_type, &typed_else.data_type) {
-                return Err(LangError::Compile(CompileError::new(
-                    format!(
-                        "If branches must have the same type, but found '{}' and '{}'",
-                        typed_then.data_type, typed_else.data_type
-                    ),
-                    *span,
-                )));
+                return Err(LangError::Compile(CompileError::new(format!("If branches must have the same type, but found '{}' and '{}'", typed_then.data_type, typed_else.data_type),*span)));
             }
             let expr_type = typed_then.data_type.clone();
             Ok(TypedExpr {
@@ -1300,37 +1328,22 @@ fn analyze_sexp_from_slice<'a>(
             })
         }
         RawExprPart::MatchExpr { value, arms, span } => {
-            *parts = &parts[1..];
             analyze_match_expr(analyzer, value, arms, *span)
         }
-        RawExprPart::Lambda {
-            params: lambda_params,
-            body: lambda_body,
-            return_type: raw_return_type,
-            span,
-        } => {
-            *parts = &parts[1..]; // ラムダ式を消費
-            // RawAstNode::Lambda を構築し、analyze_expr に渡す
+        RawExprPart::Lambda { params, body, return_type, span } => {
             let raw_lambda_node = RawAstNode::Lambda {
-                params: lambda_params.clone(),
-                body: lambda_body.clone(),
-                return_type: raw_return_type.clone(),
+                params: params.clone(),
+                body: body.clone(),
+                return_type: return_type.clone(),
                 span: *span,
             };
             analyze_expr(analyzer, &raw_lambda_node)
         }
-        RawExprPart::TypeAnnotation(_, span) => Err(LangError::Compile(CompileError::new(
-            "Type annotation must follow an expression",
-            *span,
-        ))),
-        RawExprPart::CStyleArgs(_, span) => Err(LangError::Compile(CompileError::new(
-            "Argument list cannot be at the start of an expression",
-            *span,
-        ))),
+        _ => unreachable!(),
     }
 }
 
-/// 数式ノードの解析ロジック
+
 fn analyze_math_node(analyzer: &mut Analyzer, node: &MathAstNode) -> Result<TypedExpr, LangError> {
     match node {
         MathAstNode::Literal(literal, span) => match literal {

@@ -16,7 +16,7 @@ fn add2 |a: i32, b: i32, c: i32, d: i32|->i32 {
     $a + b + c + d$
 }
 
-fn main {
+fn main ||->() {
     println("--- polish add2 overload test start ---");
 
     // 1. C-style 呼び出し（括弧付き）でのオーバーロード解決
@@ -35,6 +35,7 @@ fn main {
     // 2. S-style (Polish) 呼び出しでのオーバーロード解決
     //    2 引数版
     //    add2 1 2  -> add2(1, 2)
+    // 型エラーとならないオーバーロード候補のうち、最も多く引数を消費するものを選択する 今回だと(i32,i32)->i32
     let s2 add2 1 2;            // = 3
     println(string_concat("s2 = ", i32_to_string(s2)));
 

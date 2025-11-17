@@ -1,0 +1,49 @@
+// 関数定義の様々な糖衣構文と、呼び出し形式、型注釈をテストする。
+
+// --- 1. 引数なし定数関数の定義 ---
+fn f1 1                            // fnキーワード + 本体のみ (最も省略)
+let hoist f2 ||->() {2}            // let hoist + 完全なシグネチャ
+let hoist f3 || {3}                // 戻り値型を省略 (->() が暗黙的に補われる)
+let hoist f4 {4}                   // 引数と戻り値型を省略
+let hoist f5 ||->() 5              // 本体の `{}` を省略
+
+// --- 2. 引数あり関数の定義 ---
+fn identity |x: i32|->i32 x
+let hoist identity2 |x: i32|->i32 {x}
+
+// --- 3. main関数 (テスト実行) ---
+fn main ||->() {
+    println("--- Function Syntax Sugar Test ---");
+
+    // 1. 定数関数の呼び出しテスト
+    println(string_concat("f1 (fn f1 1): ", i32_to_string(f1())));
+    println(string_concat("f2 (let hoist ||->(){2}): ", i32_to_string(f2())));
+    println(string_concat("f3 (let hoist ||{3}): ", i32_to_string(f3())));
+    println(string_concat("f4 (let hoist {4}): ", i32_to_string(f4())));
+    println(string_concat("f5 (let hoist ||->() 5): ", i32_to_string(f5())));
+
+    // 2. 引数あり関数の呼び出しテスト
+    let id1 identity(10);
+    let id2 identity2 20;
+    println(string_concat("identity(10): ", i32_to_string(id1)));
+    println(string_concat("identity2 20: ", i32_to_string(id2)));
+
+    // 3. ポーランド記法のネスト呼び出しテスト
+    let nested_polish identity identity 100; // identity(identity(100))
+    let grouped_polish identity (identity 200); // identity(identity(200))
+    println(string_concat("nested polish (identity identity 100): ", i32_to_string(nested_polish)));
+    println(string_concat("grouped polish (identity (identity 200)): ", i32_to_string(grouped_polish)));
+
+    // 4. 型注釈付きの呼び出しテスト
+    // 注: 式全体を括弧で囲む必要がある
+    let annotated1 (identity:(i32)->i32 42);
+    let annotated2 ((identity:(i32)->i32 42:i32):i32);
+    println(string_concat("annotated call 1: ", i32_to_string(annotated1)));
+    println(string_concat("annotated call 2: ", i32_to_string(annotated2)));
+    
+    // ネストした呼び出しに型注釈
+    let annotated3 ((identity:((i32)->i32) (identity:(i32)->i32 99:i32):i32):i32);
+    println(string_concat("nested annotated call: ", i32_to_string(annotated3)));
+
+    println("--- Test Finished ---");
+}
