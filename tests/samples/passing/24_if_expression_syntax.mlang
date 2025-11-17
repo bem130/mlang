@@ -1,0 +1,55 @@
+// if式が波括弧を使わずに直接値を返す省略記法をテストする。
+
+// 1. 基本的な省略記法 (then/else 共に単一の式)
+fn abs |n: i32|->i32
+    if $n >= 0$ n
+    else $-n$;
+
+// 2. else if チェーンの省略記法
+fn sign |n: i32|->i32
+    if $n > 0$ 1
+    else if $n < 0$ -1
+    else 0;
+
+// 3. then/else 節が関数呼び出しであるケース
+fn describe |n: i32|->string
+    if $n == 0$ "zero"
+    else i32_to_string(n);
+
+// 4. then/else 節がS式であるケース
+fn max |a: i32, b: i32|->i32
+    if $a > b$ a else b;
+
+fn check_complex |a: i32, b: i32|->i32
+    // if式の結果を直接let束縛し、さらに計算に使用する
+    let chosen_one = if $a > 10$ a else b;
+    $chosen_one * 2$;
+
+// --- メイン関数 (テスト実行) ---
+fn main ||->() {
+    println("--- If Expression Syntax Test ---");
+
+    // abs関数のテスト
+    println(string_concat("abs(10) -> ", i32_to_string(abs(10))));
+    println(string_concat("abs(-5) -> ", i32_to_string(abs(-5))));
+    println(string_concat("abs(0) -> ", i32_to_string(abs(0))));
+
+    // sign関数のテスト (else if)
+    println(string_concat("sign(99) -> ", i32_to_string(sign(99))));
+    println(string_concat("sign(-123) -> ", i32_to_string(sign(-123))));
+    println(string_concat("sign(0) -> ", i32_to_string(sign(0))));
+
+    // describe関数のテスト (関数呼び出し)
+    println(string_concat("describe(0) -> ", describe(0)));
+    println(string_concat("describe(42) -> ", describe(42)));
+
+    // max関数のテスト
+    println(string_concat("max(5, 10) -> ", i32_to_string(max(5, 10))));
+    println(string_concat("max(10, 5) -> ", i32_to_string(max(10, 5))));
+
+    // 複雑なロジックのテスト
+    println(string_concat("check_complex(11, 5) -> ", i32_to_string(check_complex(11, 5)))); // (11 * 2) = 22
+    println(string_concat("check_complex(9, 8) -> ", i32_to_string(check_complex(9, 8))));   // (8 * 2) = 16
+
+    println("--- Test Finished ---");
+}

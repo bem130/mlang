@@ -1,0 +1,27 @@
+{
+  "expect": "ok",
+  "functions": [
+    { "name": "abs", "params": ["i32"], "return_type": "i32" },
+    { "name": "sign", "params": ["i32"], "return_type": "i32" },
+    { "name": "describe", "params": ["i32"], "return_type": "string" },
+    { "name": "max", "params": ["i32", "i32"], "return_type": "i32" },
+    { "name": "check_complex", "params": ["i32", "i32"], "return_type": "i32" },
+    { "name": "main", "params": [], "return_type": "unit" }
+  ],
+  "stdout": [
+    "--- If Expression Syntax Test ---",
+    "abs(10) -> 10",
+    "abs(-5) -> 5",
+    "abs(0) -> 0",
+    "sign(99) -> 1",
+    "sign(-123) -> -1",
+    "sign(0) -> 0",
+    "describe(0) -> zero",
+    "describe(42) -> 42",
+    "max(5, 10) -> 10",
+    "max(10, 5) -> 10",
+    "check_complex(11, 5) -> 22",
+    "check_complex(9, 8) -> 16",
+    "--- Test Finished ---"
+  ]
+}
