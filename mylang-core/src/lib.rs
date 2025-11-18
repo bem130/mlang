@@ -7,16 +7,17 @@ extern crate alloc;
 pub mod ast;
 pub mod compiler;
 pub mod error;
+pub mod smt;
 pub mod span;
 pub mod token;
-pub mod smt;
 
 mod lexer;
 mod parser;
+pub use parser::ParseOutput;
 
 use crate::ast::{RawAstNode, TypedAstNode};
 use crate::compiler::{Analyzer, FunctionSignature};
-use crate::error::{CompileError, LangError, ParseError};
+use crate::error::{CompileError, Diagnostic, LangError, ParseError};
 use crate::span::{Span, combine_spans};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -39,6 +40,7 @@ pub struct ParsedModule {
     pub raw_ast: Vec<RawAstNode>,
     pub prepared_ast: Vec<RawAstNode>,
     pub refinements: Vec<ast::MathAstNode>,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// IDE向けに字句解析・構文解析・意味解析の全情報をまとめた構造体。
@@ -57,6 +59,18 @@ pub fn lex_source(source: &str) -> Result<Vec<(token::Token, Span)>, LangError> 
 
 /// トークン列を構文解析してRawASTへ変換するヘルパー。
 pub fn parse_tokens(tokens: &[(token::Token, Span)]) -> Result<Vec<RawAstNode>, LangError> {
+    let report = parse_tokens_with_diagnostics(tokens);
+    if report.has_errors() {
+        Err(LangError::Parse(ParseError::from_diagnostics(
+            report.diagnostics,
+        )))
+    } else {
+        Ok(report.nodes)
+    }
+}
+
+/// トークン列を構文解析し、診断情報付きで結果を返す。
+pub fn parse_tokens_with_diagnostics(tokens: &[(token::Token, Span)]) -> ParseOutput {
     let mut parser = parser::Parser::new(tokens.to_vec());
     parser.parse_toplevel()
 }
@@ -134,15 +148,24 @@ pub fn prepare_ast(
 /// 字句解析と構文解析の両方を行い、解析結果を返すヘルパー。
 pub fn parse_source(source: &str, is_library: bool) -> Result<ParsedModule, LangError> {
     let tokens = lex_source(source)?;
-    // Use Parser directly so we can collect refinement predicates
-    let mut parser = parser::Parser::new(tokens.to_vec());
-    let raw_ast = parser.parse_toplevel()?;
-    let prepared_ast = prepare_ast(&raw_ast, is_library)?;
+    let report = parse_tokens_with_diagnostics(&tokens);
+    if report.has_errors() {
+        return Err(LangError::Parse(ParseError::from_diagnostics(
+            report.diagnostics,
+        )));
+    }
+    let ParseOutput {
+        nodes,
+        diagnostics,
+        refinements,
+    } = report;
+    let prepared_ast = prepare_ast(&nodes, is_library)?;
     Ok(ParsedModule {
         tokens,
-        raw_ast,
+        raw_ast: nodes,
         prepared_ast,
-        refinements: parser.refinements,
+        refinements,
+        diagnostics,
     })
 }
 

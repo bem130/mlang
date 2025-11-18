@@ -11,7 +11,10 @@ use mylang_core::ast::{
     DataType, RawAstNode, TypedAstNode, TypedExpr, TypedExprKind, TypedMatchArm,
 };
 use mylang_core::compiler::{Analyzer, FunctionSignature};
-use mylang_core::error::{CompileError, LangError, ParseError};
+use mylang_core::error::{
+    CompileError, Diagnostic as CoreDiagnostic, DiagnosticKind, LangError,
+};
+use mylang_core::parse_tokens_with_diagnostics;
 use mylang_core::span::Span;
 use mylang_core::token::Token;
 
@@ -290,15 +293,44 @@ fn string_literal_length(text: &str, start: usize) -> usize {
     }
     1
 }
+fn issues_from_diagnostics(diags: &[CoreDiagnostic]) -> Vec<Issue> {
+    diags
+        .iter()
+        .map(|diag| {
+            let severity = match diag.kind {
+                DiagnosticKind::Error => DiagnosticSeverity::ERROR,
+                DiagnosticKind::Warning => DiagnosticSeverity::WARNING,
+            };
+            let mut related = Vec::new();
+            if let Some(help) = &diag.help {
+                related.push((help.clone(), Span::default()));
+            }
+            Issue {
+                severity,
+                message: diag.message.clone(),
+                span: diag.span,
+                related,
+                highlight: diag.highlight.clone(),
+            }
+        })
+        .collect()
+}
+
 fn convert_lang_error(error: LangError) -> Vec<Issue> {
     match error {
-        LangError::Parse(ParseError { message, span }) => vec![Issue {
-            severity: DiagnosticSeverity::ERROR,
-            message,
-            span,
-            related: Vec::new(),
-            highlight: None,
-        }],
+        LangError::Parse(parse_error) => {
+            let mut issues = issues_from_diagnostics(&parse_error.diagnostics);
+            if issues.is_empty() {
+                issues.push(Issue {
+                    severity: DiagnosticSeverity::ERROR,
+                    message: "parse error".into(),
+                    span: Span::default(),
+                    related: Vec::new(),
+                    highlight: None,
+                });
+            }
+            issues
+        }
         LangError::Compile(CompileError {
             message,
             span,
@@ -697,40 +729,47 @@ impl DocumentSnapshot {
                     })
                     .collect();
 
-                match mylang_core::parse_tokens(&raw_tokens) {
-                    Ok(raw_ast) => {
-                        for node in &raw_ast {
-                            match node {
-                                RawAstNode::StructDef { name, .. } => {
-                                    type_definitions.insert(name.0.clone(), name.1);
-                                }
-                                RawAstNode::EnumDef { name, .. } => {
-                                    type_definitions.insert(name.0.clone(), name.1);
-                                }
-                                _ => {}
-                            }
-                        }
+                let parse_report = parse_tokens_with_diagnostics(&raw_tokens);
+                issues.extend(issues_from_diagnostics(&parse_report.diagnostics));
+                if parse_report.has_errors() {
+                    return Self {
+                        text,
+                        line_index,
+                        tokens,
+                        type_definitions,
+                        typed,
+                        issues,
+                    };
+                }
 
-                        match mylang_core::prepare_ast(&raw_ast, true) {
-                            Ok(prepared) => {
-                                let mut analyzer = Analyzer::new();
-                                match analyzer.analyze(&prepared) {
-                                    Ok(typed_ast) => {
-                                        let function_table = analyzer.function_table.clone();
-                                        let (mut analysis, warnings) =
-                                            build_typed_analysis(&typed_ast, function_table);
-                                        for span in type_definitions.values() {
-                                            analysis
-                                                .symbol_kinds
-                                                .insert((span.line, span.column), SymbolKind::Type);
-                                        }
-                                        issues.extend(warnings);
-                                        typed = Some(analysis);
-                                    }
-                                    Err(err) => {
-                                        issues.extend(convert_lang_error(err));
-                                    }
+                let raw_ast = parse_report.nodes;
+                for node in &raw_ast {
+                    match node {
+                        RawAstNode::StructDef { name, .. } => {
+                            type_definitions.insert(name.0.clone(), name.1);
+                        }
+                        RawAstNode::EnumDef { name, .. } => {
+                            type_definitions.insert(name.0.clone(), name.1);
+                        }
+                        _ => {}
+                    }
+                }
+
+                match mylang_core::prepare_ast(&raw_ast, true) {
+                    Ok(prepared) => {
+                        let mut analyzer = Analyzer::new();
+                        match analyzer.analyze(&prepared) {
+                            Ok(typed_ast) => {
+                                let function_table = analyzer.function_table.clone();
+                                let (mut analysis, warnings) =
+                                    build_typed_analysis(&typed_ast, function_table);
+                                for span in type_definitions.values() {
+                                    analysis
+                                        .symbol_kinds
+                                        .insert((span.line, span.column), SymbolKind::Type);
                                 }
+                                issues.extend(warnings);
+                                typed = Some(analysis);
                             }
                             Err(err) => {
                                 issues.extend(convert_lang_error(err));
