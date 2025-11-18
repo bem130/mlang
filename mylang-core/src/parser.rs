@@ -2,7 +2,7 @@
 
 extern crate alloc;
 use crate::ast::*;
-use crate::error::{LangError, ParseError};
+use crate::error::{Diagnostic, DiagnosticKind, LangError, ParseError};
 use crate::span::{Span, combine_spans};
 use crate::token::Token;
 use alloc::boxed::Box;
@@ -11,6 +11,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
+use core::mem;
 
 /// 構文解析器
 pub struct Parser {
@@ -18,6 +19,22 @@ pub struct Parser {
     position: usize,
     /// Collected refinement predicates parsed from `<binder: Base | $predicate$>`
     pub refinements: Vec<MathAstNode>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParseOutput {
+    pub nodes: Vec<RawAstNode>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub refinements: Vec<MathAstNode>,
+}
+
+impl ParseOutput {
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|diag| diag.kind == DiagnosticKind::Error)
+    }
 }
 
 impl Parser {
@@ -26,21 +43,33 @@ impl Parser {
             tokens,
             position: 0,
             refinements: Vec::new(),
+            diagnostics: Vec::new(),
         }
     }
 
     /// トップレベルの構文(関数定義など)をパースする
-    pub fn parse_toplevel(&mut self) -> Result<Vec<RawAstNode>, LangError> {
+    pub fn parse_toplevel(&mut self) -> ParseOutput {
         let mut nodes = Vec::new();
         while !self.is_at_end() {
-            // 空の文 (;) をスキップする
-            while self.check_and_consume(Token::Semicolon) {}
+            while self.peek() == Some(&Token::Semicolon) {
+                self.consume_semicolon_sequence(false);
+            }
             if self.is_at_end() {
                 break;
             }
-            nodes.push(self.parse_statement()?);
+            match self.parse_statement() {
+                Ok(node) => nodes.push(node),
+                Err(err) => {
+                    self.record_error(err);
+                    self.recover_statement(false);
+                }
+            }
         }
-        Ok(nodes)
+        ParseOutput {
+            nodes,
+            diagnostics: mem::take(&mut self.diagnostics),
+            refinements: mem::take(&mut self.refinements),
+        }
     }
 
     /// `fn name |p: t|->r body` を `let hoist name |p: t|->r body` に脱糖する
@@ -156,28 +185,33 @@ impl Parser {
         let mut statements = Vec::new();
 
         while self.peek() != Some(&Token::RBrace) && !self.is_at_end() {
-            let stmt = self.parse_statement()?;
-            statements.push(stmt);
+            match self.parse_statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(err) => {
+                    self.record_error(err);
+                    self.recover_statement(true);
+                    if self.peek() == Some(&Token::RBrace) {
+                        break;
+                    }
+                    continue;
+                }
+            }
 
-            // ブロックの終わり(`}`)が見えている場合、それは最後の式かもしれないのでセミコロンを要求しない
             if self.peek() == Some(&Token::RBrace) {
                 break;
             }
 
-            // それ以外の場合は、文の区切りとしてセミコロンを要求する
-            if self.check_and_consume(Token::Semicolon) {
-                // オプショナルなセミコロンを許容する (例: `let a = 1;;`)
-                while self.peek() == Some(&Token::Semicolon) {
-                    self.advance();
-                }
-            } else {
-                // ブロックの最後の式（セミコロンなし）の直後が } でない場合はエラー
-                if self.peek() != Some(&Token::RBrace) {
-                    return Err(ParseError::new(
-                        "Expected semicolon or '}' after statement",
-                        self.peek_span(),
-                    )
-                    .into());
+            if self.peek() == Some(&Token::Semicolon) {
+                self.consume_semicolon_sequence(true);
+            } else if self.peek() != Some(&Token::RBrace) {
+                let span = self.peek_span();
+                self.diagnostics.push(Diagnostic::error(
+                    "Expected semicolon or '}' after statement",
+                    span,
+                ));
+                self.recover_statement(true);
+                if self.peek() == Some(&Token::RBrace) {
+                    break;
                 }
             }
         }
@@ -782,7 +816,11 @@ impl Parser {
             if self.check_and_consume(Token::Pipe) {
                 // predicate must be a math block starting with `$` ... `$`
                 if self.peek() != Some(&Token::Dollar) {
-                    return Err(ParseError::new("Expected '$' to start refinement predicate", self.peek_span()).into());
+                    return Err(ParseError::new(
+                        "Expected '$' to start refinement predicate",
+                        self.peek_span(),
+                    )
+                    .into());
                 }
                 // parse math expression
                 self.consume(Token::Dollar)?;
@@ -1148,6 +1186,65 @@ impl Parser {
                 span,
             )
             .into())
+        }
+    }
+
+    fn consume_semicolon_sequence(&mut self, emit_warning: bool) {
+        if self.peek() != Some(&Token::Semicolon) {
+            return;
+        }
+        let mut first_extra_span = None;
+        self.advance();
+        let mut redundant = 0;
+        while self.peek() == Some(&Token::Semicolon) {
+            redundant += 1;
+            if first_extra_span.is_none() {
+                first_extra_span = Some(self.peek_span());
+            }
+            self.advance();
+        }
+        if emit_warning && redundant > 0 {
+            let span = first_extra_span.unwrap_or_default();
+            let message = format!("Redundant ';' after statement ({} extra)", redundant);
+            self.diagnostics.push(Diagnostic::warning(message, span));
+        }
+    }
+
+    fn record_error(&mut self, error: LangError) {
+        match error {
+            LangError::Parse(mut parse_err) => {
+                if parse_err.diagnostics.is_empty() {
+                    self.diagnostics
+                        .push(Diagnostic::error("Unknown parse error", self.peek_span()));
+                } else {
+                    self.diagnostics.append(&mut parse_err.diagnostics);
+                }
+            }
+            LangError::Compile(compile_err) => {
+                self.diagnostics
+                    .push(Diagnostic::error(compile_err.message, compile_err.span));
+                for (note, span) in compile_err.notes {
+                    self.diagnostics.push(Diagnostic::warning(note, span));
+                }
+            }
+        }
+    }
+
+    fn recover_statement(&mut self, allow_block_end: bool) {
+        while !self.is_at_end() {
+            match self.peek() {
+                Some(Token::Semicolon) => {
+                    self.advance();
+                    break;
+                }
+                Some(Token::RBrace) if allow_block_end => break,
+                Some(Token::Let) | Some(Token::Fn) | Some(Token::Struct) | Some(Token::Enum)
+                | Some(Token::Trait) | Some(Token::Impl) | Some(Token::While)
+                | Some(Token::Match) | Some(Token::If) | Some(Token::Set) => break,
+                _ => {
+                    self.advance();
+                }
+            }
         }
     }
 }
