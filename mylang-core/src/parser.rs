@@ -581,6 +581,10 @@ impl Parser {
             Token::Dollar => self.parse_math_block(),
             // `LParen` は常にS式グループの開始
             Token::LParen => self.parse_s_expr_group(),
+            Token::GreaterThan => {
+                let (_, span) = self.advance();
+                Ok(RawExprPart::PipeOperator(span))
+            }
             Token::Colon => self.parse_type_annotation(),
             Token::If => self.parse_if_as_part(),
             Token::Pipe | Token::OrOr => self.parse_lambda_expression(),
