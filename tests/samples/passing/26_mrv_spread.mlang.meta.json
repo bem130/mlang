@@ -1,0 +1,15 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "pair", "params": [], "return_type": "(i32, i32)"},
+    {"name": "add3", "params": ["i32", "i32", "i32"], "return_type": "i32"},
+    {"name": "add2", "params": ["i32", "i32"], "return_type": "i32"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "--- MRV Spec Test ---",
+    "v1 (P-style): 35",
+    "v2 (Spread): 35",
+    "v3 (Mixed): 31"
+  ]
+}

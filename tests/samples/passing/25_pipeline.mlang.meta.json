@@ -1,0 +1,15 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "double", "params": ["i32"], "return_type": "i32"},
+    {"name": "sub", "params": ["i32", "i32"], "return_type": "i32"},
+    {"name": "add", "params": ["i32", "i32"], "return_type": "i32"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "--- Pipeline Spec Test ---",
+    "res1: 16",
+    "res2: 10",
+    "res3: 10"
+  ]
+}

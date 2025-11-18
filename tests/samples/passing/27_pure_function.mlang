@@ -1,0 +1,21 @@
+// 仕様書準拠の純粋関数 (*>) テスト
+
+// 純粋関数: 副作用なし、引数変更なし
+fn square |n: i32| *> i32 $n * n$;
+
+// 純粋関数から純粋関数を呼ぶ
+fn calc_hypotenuse_squared |a: i32, b: i32| *> i32
+    match (square(a), square(b)) {
+        (sa, sb) => $sa + sb$,
+    };
+
+// 通常の関数から純粋関数を呼ぶことは可能 (サブタイピング Pure <: Impure)
+fn main ||->() {
+    println("--- Pure Function Spec Test ---");
+    
+    let a 3;
+    let b 4;
+    let h2 calc_hypotenuse_squared(a, b); // 9 + 16 = 25
+    
+    println(string_concat("hypotenuse squared: ", i32_to_string(h2)));
+}

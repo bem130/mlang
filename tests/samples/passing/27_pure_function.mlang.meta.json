@@ -1,0 +1,12 @@
+{
+  "expect": "ok",
+  "functions": [
+    {"name": "square", "params": ["i32"], "return_type": "i32"},
+    {"name": "calc_hypotenuse_squared", "params": ["i32", "i32"], "return_type": "i32"},
+    {"name": "main", "params": [], "return_type": "unit"}
+  ],
+  "stdout": [
+    "--- Pure Function Spec Test ---",
+    "hypotenuse squared: 25"
+  ]
+}

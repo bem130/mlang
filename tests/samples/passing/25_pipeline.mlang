@@ -1,0 +1,35 @@
+// 仕様書準拠のパイプライン演算子テスト
+
+fn double |n: i32|->i32 $n * 2$;
+fn sub |a: i32, b: i32|->i32 $a - b$;
+fn add |a: i32, b: i32|->i32 $a + b$;
+
+fn main ||->() {
+    println("--- Pipeline Spec Test ---");
+
+    // 1. シンプルなパイプ
+    // 10 > sub 2  => sub(10, 2) => 8
+    // 8 > double  => double(8)  => 16
+    let res1 10 > sub 2 > double;
+    println(string_concat("res1: ", i32_to_string(res1)));
+
+    // 2. 左辺の抽出 (LHS Extraction) と優先順位
+    // 仕様書 3.3 より:
+    // add 1 add 2 3 > add 4
+    //
+    // 解析順序:
+    // 1. `>` の左側をスキャンし、直近の完結した式 (PrimaryExpression / P-style chain) を探す。
+    // 2. `add 2 3` が完結した式 (= 5) として抽出される。
+    // 3. これが `> add 4` の第一引数となる => add(5, 4) => 9。
+    // 4. 残った左側 `add 1` が 9 を引数に取る => add(1, 9) => 10。
+    //
+    // 等価な式: add 1 ((add 2 3) > add 4)
+    let res2 add 1 add 2 3 > add 4;
+    println(string_concat("res2: ", i32_to_string(res2)));
+
+    // 比較用: 通常のP-style (右結合的なMaximal Munch)
+    // add 1 (add (add 2 3) 4) = add 1 (add 5 4) = add 1 9 = 10
+    // 結果は同じになるが、構文解析のアプローチが異なる
+    let res3 add 1 add add 2 3 4;
+    println(string_concat("res3: ", i32_to_string(res3)));
+}
