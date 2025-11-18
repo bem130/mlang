@@ -2,9 +2,78 @@
 
 extern crate alloc;
 use crate::span::Span;
+use alloc::format;
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticKind {
+    Error,
+    Warning,
+}
+
+#[derive(Debug, Clone)]
+pub struct Diagnostic {
+    pub kind: DiagnosticKind,
+    pub message: String,
+    pub span: Span,
+    pub help: Option<String>,
+    pub highlight: Option<String>,
+}
+
+impl Diagnostic {
+    pub fn error(message: impl Into<String>, span: Span) -> Self {
+        Self {
+            kind: DiagnosticKind::Error,
+            message: message.into(),
+            span,
+            help: None,
+            highlight: None,
+        }
+    }
+
+    pub fn warning(message: impl Into<String>, span: Span) -> Self {
+        Self {
+            kind: DiagnosticKind::Warning,
+            message: message.into(),
+            span,
+            help: None,
+            highlight: None,
+        }
+    }
+
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
+        self
+    }
+
+    pub fn with_highlight(mut self, highlight: impl Into<String>) -> Self {
+        self.highlight = Some(highlight.into());
+        self
+    }
+
+    fn color_code(&self) -> (&'static str, &'static str) {
+        match self.kind {
+            DiagnosticKind::Error => ("error", "\x1b[31m"),
+            DiagnosticKind::Warning => ("warning", "\x1b[33m"),
+        }
+    }
+
+    pub fn to_colored_string(&self) -> String {
+        let (label, color) = self.color_code();
+        let reset = "\x1b[0m";
+        let mut message = format!("{color}{label}{reset} at {}: {}", self.span, self.message);
+        if let Some(ref highlight) = self.highlight {
+            message.push_str(&format!("\n  --> {}", highlight));
+        }
+        if let Some(ref help) = self.help {
+            message.push_str(&format!("\n  help: {}", help));
+        }
+        message
+    }
+}
 
 /// ライブラリ全体で発生しうるエラーの集約
 #[derive(Debug)]
@@ -23,24 +92,41 @@ impl fmt::Display for LangError {
 }
 
 /// 構文解析エラー
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParseError {
-    pub message: String,
-    pub span: Span,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} at {}", self.message, self.span)
+        if self.diagnostics.is_empty() {
+            return write!(f, "no diagnostics emitted");
+        }
+        for (idx, diagnostic) in self.diagnostics.iter().enumerate() {
+            if idx > 0 {
+                writeln!(f)?;
+            }
+            write!(f, "{}", diagnostic.to_colored_string())?;
+        }
+        Ok(())
     }
 }
 
 impl ParseError {
     pub fn new(message: impl Into<String>, span: Span) -> Self {
         Self {
-            message: message.into(),
-            span,
+            diagnostics: vec![Diagnostic::error(message, span)],
         }
+    }
+
+    pub fn from_diagnostics(diagnostics: Vec<Diagnostic>) -> Self {
+        Self { diagnostics }
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|diag| diag.kind == DiagnosticKind::Error)
     }
 }
 
