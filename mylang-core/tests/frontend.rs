@@ -3,8 +3,10 @@ use mylang_core::ast::{DataType, TypedAstNode};
 use mylang_core::compiler::FunctionSignature;
 use mylang_core::error::LangError;
 use serde::Deserialize;
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
@@ -215,8 +217,9 @@ fn collect_mlang_sources(root: &Path) -> Vec<(PathBuf, String)> {
 
 #[test]
 fn passing_samples_match_metadata() {
+    let mut failures = Vec::new();
     for sample in load_samples("passing") {
-        match sample.metadata {
+        let result = panic::catch_unwind(AssertUnwindSafe(|| match sample.metadata {
             SampleMetadata::Ok { functions, .. } => {
                 let analysis = analyze_source(&sample.source, false).unwrap_or_else(|err| {
                     panic!("expected Ok for {}, got Err: {}", sample.name, err)
@@ -334,68 +337,103 @@ fn passing_samples_match_metadata() {
                 "sample {} is marked as error metadata but located in passing directory",
                 sample.name
             ),
+        }));
+
+        if let Err(payload) = result {
+            failures.push(format!(
+                "{}: {}",
+                sample.name,
+                format_panic_payload(&payload)
+            ));
         }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} passing sample(s) failed:\n{}",
+            failures.len(),
+            failures.join("\n\n")
+        );
     }
 }
 
 #[test]
 fn failing_samples_match_metadata() {
+    let mut failures = Vec::new();
     for sample in load_samples("failing") {
-        let (error_meta, notes_expect) = match sample.metadata {
-            SampleMetadata::Error {
-                error,
-                notes_contains,
-            } => (error, notes_contains),
-            SampleMetadata::Ok { .. } => panic!(
-                "sample {} is marked as ok metadata but located in failing directory",
-                sample.name
-            ),
-        };
-
-        let err = match analyze_source(&sample.source, false) {
-            Ok(_) => panic!("expected Err for {}", sample.name),
-            Err(err) => err,
-        };
-
-        match (&err, error_meta.variant) {
-            (LangError::Parse(_), ErrorVariant::Parse) => {}
-            (LangError::Compile(_), ErrorVariant::Compile) => {}
-            (actual, expected) => panic!(
-                "error variant mismatch for {}: expected {:?}, got {:?}",
-                sample.name, expected, actual
-            ),
-        }
-
-        let message = err.to_string();
-        assert!(
-            message.contains(&error_meta.message_contains),
-            "error message for {} did not contain {:?}: {}",
-            sample.name,
-            error_meta.message_contains,
-            message
-        );
-
-        if !notes_expect.is_empty() {
-            let compile_err = match &err {
-                LangError::Compile(compile_err) => compile_err,
-                _ => panic!(
-                    "notes expectations provided for non-compile error in {}",
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            let (error_meta, notes_expect) = match sample.metadata {
+                SampleMetadata::Error {
+                    error,
+                    notes_contains,
+                } => (error, notes_contains),
+                SampleMetadata::Ok { .. } => panic!(
+                    "sample {} is marked as ok metadata but located in failing directory",
                     sample.name
                 ),
             };
 
-            for expected in &notes_expect {
-                let matched = compile_err
-                    .notes
-                    .iter()
-                    .any(|(note, _)| note.contains(expected));
-                assert!(
-                    matched,
-                    "expected note containing {:?} not found for {}. Notes: {:?}",
-                    expected, sample.name, compile_err.notes
-                );
+            let err = match analyze_source(&sample.source, false) {
+                Ok(_) => panic!("expected Err for {}", sample.name),
+                Err(err) => err,
+            };
+
+            match (&err, error_meta.variant) {
+                (LangError::Parse(_), ErrorVariant::Parse) => {}
+                (LangError::Compile(_), ErrorVariant::Compile) => {}
+                (actual, expected) => panic!(
+                    "error variant mismatch for {}: expected {:?}, got {:?}",
+                    sample.name, expected, actual
+                ),
             }
+
+            let message = err.to_string();
+            assert!(
+                message.contains(&error_meta.message_contains),
+                "error message for {} did not contain {:?}: {}",
+                sample.name,
+                error_meta.message_contains,
+                message
+            );
+
+            if !notes_expect.is_empty() {
+                let compile_err = match &err {
+                    LangError::Compile(compile_err) => compile_err,
+                    _ => panic!(
+                        "notes expectations provided for non-compile error in {}",
+                        sample.name
+                    ),
+                };
+
+                for expected in &notes_expect {
+                    let matched = compile_err
+                        .notes
+                        .iter()
+                        .any(|(note, _)| note.contains(expected));
+                    assert!(
+                        matched,
+                        "expected note containing {:?} not found for {}. Notes: {:?}",
+                        expected, sample.name, compile_err.notes
+                    );
+                }
+            }
+        }));
+
+        if let Err(payload) = result {
+            failures.push(format!(
+                "{}: {}",
+                sample.name,
+                format_panic_payload(&payload)
+            ));
         }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} failing sample(s) failed:\n{}",
+            failures.len(),
+            failures.join("\n\n")
+        );
     }
 }
 
@@ -533,5 +571,15 @@ fn data_type_to_str(data_type: &DataType) -> String {
             format!("({}) -> {}", params_s, data_type_to_str(return_type))
         }
         DataType::Refined { base, .. } => data_type_to_str(base),
+    }
+}
+
+fn format_panic_payload(payload: &(dyn Any + Send)) -> String {
+    if let Some(msg) = payload.downcast_ref::<&str>() {
+        msg.to_string()
+    } else if let Some(msg) = payload.downcast_ref::<String>() {
+        msg.clone()
+    } else {
+        "non-string panic payload".to_string()
     }
 }
