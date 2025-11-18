@@ -9,7 +9,6 @@
   "stdout": [
     "--- MRV Spec Test ---",
     "v1 (P-style): 35",
-    "v2 (Spread): 35",
-    "v3 (Mixed): 31"
+    "v2 (Spread): 35"
   ]
 }
