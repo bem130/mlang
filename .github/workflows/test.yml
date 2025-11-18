@@ -1,0 +1,53 @@
+name: Run Tests
+
+# ワークフローの実行トリガー
+on:
+  # masterブランチにpushされたとき
+  push:
+    branches:
+      - master
+  # masterブランチに対するpull requestが作成・更新されたとき
+  pull_request:
+    branches:
+      - master
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # 'test' という名前のジョブを定義
+  test:
+    name: Run cargo test
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. リポジトリのソースコードをチェックアウトする
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Rustの安定版ツールチェインをインストールする
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      # 3. Cargoの依存関係をキャッシュして、次回以降の実行を高速化する
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # 4. ワークスペース全体のテストを実行する
+      # --workspaceフラグにより、mylang-core, mylang-cliなど全てのクレートのテストが実行される
+      - name: Run tests
+        run: cargo test --workspace --verbose
