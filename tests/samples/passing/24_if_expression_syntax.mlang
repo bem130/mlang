@@ -22,7 +22,7 @@ fn max |a: i32, b: i32|->i32
 
 fn check_complex |a: i32, b: i32|->i32
     // if式の結果を直接let束縛し、さらに計算に使用する
-    let chosen_one = if $a > 10$ a else b;
+    let chosen_one if $a > 10$ a else b;
     $chosen_one * 2$;
 
 // --- メイン関数 (テスト実行) ---
