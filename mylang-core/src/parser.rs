@@ -349,7 +349,7 @@ impl Parser {
         let start_span = self.consume(Token::Fn)?.1;
         let (name, name_span) = self.consume_identifier()?;
         let type_params = self.parse_type_params()?;
-        let (params, return_type) = self.parse_function_signature_components()?;
+        let (params, return_type, purity) = self.parse_function_signature_components()?;
 
         let (body, end_span) = if require_body {
             let body = self.parse_sexpression()?;
@@ -368,6 +368,7 @@ impl Parser {
             type_params,
             params,
             return_type,
+            purity,
             body,
             span: combine_spans(start_span, end_span),
         })
@@ -581,6 +582,10 @@ impl Parser {
             Token::Dollar => self.parse_math_block(),
             // `LParen` は常にS式グループの開始
             Token::LParen => self.parse_s_expr_group(),
+            Token::GreaterThan => {
+                let (_, span) = self.advance();
+                Ok(RawExprPart::PipeOperator(span))
+            }
             Token::Colon => self.parse_type_annotation(),
             Token::If => self.parse_if_as_part(),
             Token::Pipe | Token::OrOr => self.parse_lambda_expression(),
@@ -633,7 +638,7 @@ impl Parser {
     fn parse_lambda_as_node(&mut self) -> Result<RawAstNode, LangError> {
         let start_span = self.peek_span();
 
-        let (params, return_type) = self.parse_function_signature_components()?;
+        let (params, return_type, purity) = self.parse_function_signature_components()?;
 
         // 本体をパース
         let body = self.parse_sexpression()?;
@@ -643,13 +648,21 @@ impl Parser {
             params,
             body: Box::new(body),
             return_type,
+            purity,
             span: combine_spans(start_span, end_span),
         })
     }
 
     fn parse_function_signature_components(
         &mut self,
-    ) -> Result<(Vec<((String, Span), (String, Span))>, (String, Span)), LangError> {
+    ) -> Result<
+        (
+            Vec<((String, Span), (String, Span))>,
+            (String, Span),
+            FunctionPurity,
+        ),
+        LangError,
+    > {
         let mut params = Vec::new();
         if self.check_and_consume(Token::OrOr) {
             // empty parameter list via ||
@@ -669,9 +682,14 @@ impl Parser {
             self.consume(Token::Pipe)?;
         }
 
-        self.consume(Token::Arrow)?;
+        let purity = if self.check_and_consume(Token::StarGreater) {
+            FunctionPurity::Pure
+        } else {
+            self.consume(Token::Arrow)?;
+            FunctionPurity::Impure
+        };
         let return_type = self.parse_type()?;
-        Ok((params, return_type))
+        Ok((params, return_type, purity))
     }
 
     fn parse_type_params(&mut self) -> Result<Vec<RawTypeParam>, LangError> {
@@ -746,6 +764,7 @@ impl Parser {
             params,
             body,
             return_type,
+            purity,
             span,
         } = node
         {
@@ -753,6 +772,7 @@ impl Parser {
                 params,
                 body,
                 return_type,
+                purity,
                 span,
             })
         } else {

@@ -64,6 +64,7 @@ pub enum Token {
     LessThanEquals,    // <=
     GreaterThan,       // >
     GreaterThanEquals, // >=
+    StarGreater,       // *>
 }
 
 impl Token {

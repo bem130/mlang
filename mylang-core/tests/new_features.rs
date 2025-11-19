@@ -1,5 +1,5 @@
 use mylang_core::analyze_source;
-use mylang_core::ast::{DataType, TypedAstNode, TypedExpr, TypedExprKind};
+use mylang_core::ast::{DataType, LiteralValue, TypedAstNode, TypedExpr, TypedExprKind};
 use mylang_core::error::LangError;
 
 // 新仕様に合わせてテストを書き直す必要あり
@@ -213,6 +213,148 @@ fn to_int |flag: bool|->i32 {
     );
 }
 
+fn find_function_body<'a>(nodes: &'a [TypedAstNode], target: &str) -> &'a TypedExpr {
+    nodes
+        .iter()
+        .find_map(|node| match node {
+            TypedAstNode::FnDef { name, body, .. } if name == target => Some(body),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("function '{}' not found", target))
+}
+
+fn expect_block<'a>(expr: &'a TypedExpr) -> &'a [TypedExpr] {
+    match &expr.kind {
+        TypedExprKind::Block { statements } => statements,
+        other => panic!("expected block expression, found {:?}", other),
+    }
+}
+
+fn is_i32_literal(expr: &TypedExpr, expected: i32) -> bool {
+    matches!(expr.kind, TypedExprKind::Literal(LiteralValue::I32(value)) if value == expected as i64)
+}
+
+fn contains_nested_add_pipeline(expr: &TypedExpr) -> bool {
+    match &expr.kind {
+        TypedExprKind::FunctionCall { name, args } => {
+            if name == "add" && args.len() == 2 {
+                if is_i32_literal(&args[1], 4)
+                    && matches!(
+                        &args[0].kind,
+                        TypedExprKind::FunctionCall { name: inner_name, args: inner_args }
+                            if inner_name == "add"
+                                && inner_args.len() == 2
+                                && is_i32_literal(&inner_args[0], 1)
+                                && matches!(
+                                    &inner_args[1].kind,
+                                    TypedExprKind::FunctionCall { name: deeper_name, args: deeper_args }
+                                        if deeper_name == "add"
+                                            && deeper_args.len() == 2
+                                            && is_i32_literal(&deeper_args[0], 2)
+                                            && is_i32_literal(&deeper_args[1], 3)
+                                )
+                    )
+                {
+                    return true;
+                }
+            }
+            args.iter().any(contains_nested_add_pipeline)
+        }
+        TypedExprKind::Block { statements } => statements.iter().any(contains_nested_add_pipeline),
+        _ => false,
+    }
+}
+
+fn contains_double_chain(expr: &TypedExpr) -> bool {
+    match &expr.kind {
+        TypedExprKind::FunctionCall { name, args } => {
+            if name == "double" && args.len() == 1 {
+                if matches!(
+                    &args[0].kind,
+                    TypedExprKind::FunctionCall { name: inner_name, args: inner_args }
+                        if inner_name == "sub"
+                            && inner_args.len() == 2
+                            && is_i32_literal(&inner_args[0], 10)
+                            && is_i32_literal(&inner_args[1], 2)
+                ) {
+                    return true;
+                }
+            }
+            args.iter().any(contains_double_chain)
+        }
+        TypedExprKind::Block { statements } => statements.iter().any(contains_double_chain),
+        _ => false,
+    }
+}
+
+#[test]
+fn pipeline_extracts_nearest_complete_expression() {
+    let source = r#"
+fn add |a: i32, b: i32|->i32 $a + b$;
+
+fn compute ||->i32 {
+    add 1 add 2 3 > add 4
+};
+
+fn main ||->() {};
+"#;
+
+    let analysis = analyze_source(source, true).expect("analysis should succeed");
+    let body = find_function_body(&analysis.typed_ast, "compute");
+    let statements = expect_block(body);
+    assert!(
+        contains_nested_add_pipeline(&statements[0]),
+        "pipeline should inject add(2,3) before final add 4"
+    );
+}
+
+#[test]
+fn pipeline_chains_multiple_functions_in_order() {
+    let source = r#"
+fn double |n: i32|->i32 $n * 2$;
+fn sub |a: i32, b: i32|->i32 $a - b$;
+
+fn chain ||->i32 {
+    10 > sub 2 > double
+};
+
+fn main ||->() {};
+"#;
+
+    let analysis = analyze_source(source, true).expect("analysis should succeed");
+    let body = find_function_body(&analysis.typed_ast, "chain");
+    let statements = expect_block(body);
+    assert!(
+        contains_double_chain(&statements[0]),
+        "pipeline should thread value into sub before double"
+    );
+}
+
+#[test]
+fn pipeline_requires_function_on_rhs() {
+    let source = r#"
+fn main ||->i32 {
+    10 > 5
+};
+"#;
+
+    let err = match analyze_source(source, true) {
+        Ok(_) => panic!("analysis should fail"),
+        Err(err) => err,
+    };
+
+    let LangError::Compile(compile_err) = err else {
+        panic!("expected compile error, got {:?}", err);
+    };
+    assert!(
+        compile_err
+            .message
+            .contains("Pipe operator requires a function call"),
+        "unexpected error: {}",
+        compile_err.message
+    );
+}
+
 #[test]
 fn matches_on_infinite_types_require_wildcard_arm() {
     let source = r#"
@@ -237,6 +379,64 @@ fn kind |x: i32|->i32 {
         "unexpected error message: {}",
         compile_err.message
     );
+}
+
+#[test]
+fn pure_functions_can_call_other_pure_functions() {
+    let source = r#"
+fn add |lhs: i32, rhs: i32| *> i32 $lhs + rhs$;
+fn square |n: i32| *> i32 $n * n$;
+
+fn sum_sq |a: i32, b: i32| *> i32 {
+    add square a square b
+};
+
+fn main ||->() {
+    let result sum_sq 3 4;
+    result;
+};
+"#;
+
+    analyze_source(source, true).expect("pure functions should compose");
+}
+
+#[test]
+fn pure_function_cannot_call_impure_builtin() {
+    let source = r#"
+fn loud |text: string| *> string {
+    println text;
+    text
+};
+"#;
+
+    let err = match analyze_source(source, true) {
+        Ok(_) => panic!("analysis must fail"),
+        Err(err) => err,
+    };
+    let LangError::Compile(compile_err) = err else {
+        panic!("expected compile error, got {:?}", err);
+    };
+    assert!(
+        compile_err
+            .message
+            .contains("Pure functions cannot call impure function 'println'"),
+        "unexpected error: {}",
+        compile_err.message
+    );
+}
+
+#[test]
+fn pure_function_allows_local_mutation() {
+    let source = r#"
+fn accumulator |a: i32, b: i32| *> i32 {
+    let mut total 0;
+    set total $total + a$;
+    set total $total + b$;
+    total
+};
+"#;
+
+    analyze_source(source, true).expect("local mutation should be allowed inside pure functions");
 }
 
 #[test]
@@ -392,16 +592,6 @@ fn main | |->() {
         "unexpected notes: {:?}",
         compile_err.notes
     );
-}
-
-fn find_function_body<'a>(nodes: &'a [TypedAstNode], target: &str) -> &'a TypedExpr {
-    nodes
-        .iter()
-        .find_map(|node| match node {
-            TypedAstNode::FnDef { name, body, .. } if name == target => Some(body),
-            _ => None,
-        })
-        .expect("function should exist")
 }
 
 // #[test]

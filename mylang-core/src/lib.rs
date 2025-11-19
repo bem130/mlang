@@ -135,6 +135,7 @@ pub fn prepare_ast(
                 params: vec![],
                 body: Box::new(main_body_block),
                 return_type: ("()".to_string(), unit_type_span),
+                purity: ast::FunctionPurity::Impure,
                 span: main_fn_span,
             }),
             span: main_fn_span,

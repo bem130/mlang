@@ -135,13 +135,15 @@ pub fn is_unsat(constraints: &ConstraintSet) -> bool {
         match lit {
             SmtLiteral::Pos(BoolAtom::Int(atom)) => normalized.push(atom.clone()),
             SmtLiteral::Neg(BoolAtom::Int(atom)) => match atom {
-                IntAtom::GeConst { var, c } => {
-                    normalized.push(IntAtom::LeConst { var: *var, c: *c - 1 })
-                }
-                IntAtom::LeConst { var, c } => {
-                    normalized.push(IntAtom::GeConst { var: *var, c: *c + 1 })
-                }
-                IntAtom::EqConst { var, c } => {
+                IntAtom::GeConst { var, c } => normalized.push(IntAtom::LeConst {
+                    var: *var,
+                    c: *c - 1,
+                }),
+                IntAtom::LeConst { var, c } => normalized.push(IntAtom::GeConst {
+                    var: *var,
+                    c: *c + 1,
+                }),
+                IntAtom::EqConst { .. } => {
                     // ¬(x == c) is a disjunction which we cannot represent with a single interval.
                     // To keep the solver simple, we conservatively approximate by leaving as a no-op.
                     // This makes the solver incomplete but keeps the implementation small.
@@ -199,7 +201,9 @@ pub fn constraints_from_math_ast(node: &MathAstNode) -> ConstraintSet {
     use crate::ast::MathAstNode::*;
     let mut set = ConstraintSet::default();
     match node {
-        InfixOp { op, left, right, .. } => {
+        InfixOp {
+            op, left, right, ..
+        } => {
             // handle conjunction
             if *op == crate::token::Token::AndAnd {
                 // recursively flatten
@@ -216,29 +220,55 @@ pub fn constraints_from_math_ast(node: &MathAstNode) -> ConstraintSet {
 
             // only support simple comparisons where one side is variable and other is literal
             match (&**left, &**right) {
-                (MathAstNode::Variable(name, _), MathAstNode::Literal(crate::ast::MathLiteral::Int(c), _)) => {
+                (
+                    MathAstNode::Variable(name, _),
+                    MathAstNode::Literal(crate::ast::MathLiteral::Int(c), _),
+                ) => {
                     // map operators
                     let var = IntVarId(hash_var(name));
                     match op {
                         crate::token::Token::GreaterThan => {
-                            set.literals.push(SmtLiteral::Pos(BoolAtom::Int(IntAtom::GeConst { var, c: *c + 1 })));
+                            set.literals
+                                .push(SmtLiteral::Pos(BoolAtom::Int(IntAtom::GeConst {
+                                    var,
+                                    c: *c + 1,
+                                })));
                         }
                         crate::token::Token::GreaterThanEquals => {
-                            set.literals.push(SmtLiteral::Pos(BoolAtom::Int(IntAtom::GeConst { var, c: *c })));
+                            set.literals
+                                .push(SmtLiteral::Pos(BoolAtom::Int(IntAtom::GeConst {
+                                    var,
+                                    c: *c,
+                                })));
                         }
                         crate::token::Token::LessThan => {
-                            set.literals.push(SmtLiteral::Pos(BoolAtom::Int(IntAtom::LeConst { var, c: *c - 1 })));
+                            set.literals
+                                .push(SmtLiteral::Pos(BoolAtom::Int(IntAtom::LeConst {
+                                    var,
+                                    c: *c - 1,
+                                })));
                         }
                         crate::token::Token::LessThanEquals => {
-                            set.literals.push(SmtLiteral::Pos(BoolAtom::Int(IntAtom::LeConst { var, c: *c })));
+                            set.literals
+                                .push(SmtLiteral::Pos(BoolAtom::Int(IntAtom::LeConst {
+                                    var,
+                                    c: *c,
+                                })));
                         }
                         crate::token::Token::EqualsEquals => {
-                            set.literals.push(SmtLiteral::Pos(BoolAtom::Int(IntAtom::EqConst { var, c: *c })));
+                            set.literals
+                                .push(SmtLiteral::Pos(BoolAtom::Int(IntAtom::EqConst {
+                                    var,
+                                    c: *c,
+                                })));
                         }
                         crate::token::Token::BangEquals => {
                             // x != c  => we encode as Neg(EqConst)
                             set.literals
-                                .push(SmtLiteral::Neg(BoolAtom::Int(IntAtom::EqConst { var, c: *c })));
+                                .push(SmtLiteral::Neg(BoolAtom::Int(IntAtom::EqConst {
+                                    var,
+                                    c: *c,
+                                })));
                         }
                         _ => {}
                     }

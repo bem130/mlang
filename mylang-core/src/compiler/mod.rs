@@ -12,6 +12,7 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec;
 use alloc::vec::Vec;
 
 /// 意味解析処理全体を管理し、状態を保持する構造体。
@@ -35,6 +36,7 @@ pub struct Analyzer {
     pub refinements: Vec<MathAstNode>,
     type_param_stack: Vec<String>,
     type_alias_stack: Vec<(String, DataType)>,
+    purity_stack: Vec<FunctionPurity>,
 }
 
 #[derive(Clone)]
@@ -44,6 +46,7 @@ pub struct VariableEntry {
     pub data_type: DataType,
     pub scope_depth: usize,
     pub is_mutable: bool,
+    pub is_parameter: bool,
 }
 
 #[derive(Clone)]
@@ -52,6 +55,7 @@ pub struct FunctionSignature {
     pub type_params: Vec<String>,
     pub param_types: Vec<DataType>,
     pub return_type: DataType,
+    pub purity: FunctionPurity,
     pub trait_bounds: Vec<TraitBound>,
     pub definition_span: Span,
 }
@@ -107,7 +111,10 @@ impl Analyzer {
         let mut function_table: BTreeMap<String, Vec<FunctionSignature>> = BTreeMap::new();
         {
             let mut register_builtin =
-                |name: &str, param_types: Vec<DataType>, return_type: DataType| {
+                |name: &str,
+                 param_types: Vec<DataType>,
+                 return_type: DataType,
+                 purity: FunctionPurity| {
                     function_table
                         .entry(name.to_string())
                         .or_default()
@@ -116,6 +123,7 @@ impl Analyzer {
                             type_params: Vec::new(),
                             param_types,
                             return_type,
+                            purity,
                             trait_bounds: Vec::new(),
                             definition_span: Span::default(),
                         });
@@ -126,24 +134,43 @@ impl Analyzer {
                 "string_concat",
                 alloc::vec![DataType::String, DataType::String],
                 DataType::String,
+                FunctionPurity::Pure,
             );
             register_builtin(
                 "i32_to_string",
                 alloc::vec![DataType::I32],
                 DataType::String,
+                FunctionPurity::Pure,
             );
             register_builtin(
                 "f64_to_string",
                 alloc::vec![DataType::F64],
                 DataType::String,
+                FunctionPurity::Pure,
             );
-            register_builtin("print", alloc::vec![DataType::String], DataType::Unit);
-            register_builtin("println", alloc::vec![DataType::String], DataType::Unit);
-            register_builtin("read_line", alloc::vec![], DataType::String);
+            register_builtin(
+                "print",
+                alloc::vec![DataType::String],
+                DataType::Unit,
+                FunctionPurity::Impure,
+            );
+            register_builtin(
+                "println",
+                alloc::vec![DataType::String],
+                DataType::Unit,
+                FunctionPurity::Impure,
+            );
+            register_builtin(
+                "read_line",
+                alloc::vec![],
+                DataType::String,
+                FunctionPurity::Impure,
+            );
             register_builtin(
                 "string_char_at",
                 alloc::vec![DataType::String, DataType::I32],
                 DataType::String,
+                FunctionPurity::Pure,
             );
         }
 
@@ -162,6 +189,7 @@ impl Analyzer {
             type_param_stack: Vec::new(),
             type_alias_stack: Vec::new(),
             refinements: Vec::new(),
+            purity_stack: vec![FunctionPurity::Impure],
         };
 
         // printlnが内部的に使用する改行文字を静的領域に事前登録しておく
@@ -170,6 +198,20 @@ impl Analyzer {
         analyzer.register_vec_builtins("i32", DataType::I32);
 
         analyzer
+    }
+
+    pub fn current_purity(&self) -> FunctionPurity {
+        *self.purity_stack.last().unwrap_or(&FunctionPurity::Impure)
+    }
+
+    pub fn push_purity(&mut self, purity: FunctionPurity) {
+        self.purity_stack.push(purity);
+    }
+
+    pub fn pop_purity(&mut self) {
+        if self.purity_stack.len() > 1 {
+            self.purity_stack.pop();
+        }
     }
 
     /// 解析のメインエントリーポイント
@@ -245,6 +287,7 @@ impl Analyzer {
                 if let RawAstNode::Lambda {
                     params,
                     return_type,
+                    purity,
                     ..
                 } = &**value
                 {
@@ -268,6 +311,7 @@ impl Analyzer {
                         type_params: type_param_names,
                         param_types,
                         return_type: ret_type,
+                        purity: *purity,
                         trait_bounds,
                         definition_span: name.1,
                     };
@@ -466,6 +510,7 @@ impl Analyzer {
                         type_params: Vec::new(),
                         param_types,
                         return_type,
+                        purity: method.purity,
                         trait_bounds: Vec::new(),
                         definition_span: method.name.1,
                     },
@@ -606,6 +651,20 @@ impl Analyzer {
                 self.string_to_type(&impl_method.return_type.0, impl_method.return_type.1)?;
             self.pop_type_alias(alias_len);
 
+            if impl_method.purity != trait_method.signature.purity {
+                let expected = match trait_method.signature.purity {
+                    FunctionPurity::Pure => "*>",
+                    FunctionPurity::Impure => "->",
+                };
+                return Err(LangError::Compile(CompileError::new(
+                    format!(
+                        "Method '{}' must use '{}' to match the trait's purity requirements",
+                        method_name, expected
+                    ),
+                    impl_method.name.1,
+                )));
+            }
+
             let expected_params = trait_method
                 .signature
                 .param_types
@@ -630,6 +689,7 @@ impl Analyzer {
                 type_params: Vec::new(),
                 param_types: expected_params,
                 return_type: expected_return,
+                purity: trait_method.signature.purity,
                 trait_bounds: Vec::new(),
                 definition_span: impl_method.name.1,
             };
@@ -805,7 +865,9 @@ impl Analyzer {
         if let Some(rest) = s.strip_prefix("__ref_") {
             // format: id#binder#base
             let mut parts = rest.splitn(3, '#');
-            if let (Some(id_str), Some(binder), Some(base)) = (parts.next(), parts.next(), parts.next()) {
+            if let (Some(id_str), Some(binder), Some(base)) =
+                (parts.next(), parts.next(), parts.next())
+            {
                 if let Ok(id) = id_str.parse::<usize>() {
                     // base may itself be a type string; parse it recursively
                     let base_ty = self.string_to_type(base, span)?;
@@ -866,10 +928,13 @@ impl Analyzer {
 
         let remainder = &s[closing_index + 1..];
         let remainder_trimmed = remainder.trim_start();
-        if !remainder_trimmed.starts_with("->") {
+        let (purity, return_part) = if remainder_trimmed.starts_with("*>") {
+            (FunctionPurity::Pure, remainder_trimmed[2..].trim_start())
+        } else if remainder_trimmed.starts_with("->") {
+            (FunctionPurity::Impure, remainder_trimmed[2..].trim_start())
+        } else {
             return Ok(None);
-        }
-        let return_part = remainder_trimmed[2..].trim_start();
+        };
         if return_part.is_empty() {
             return Err(LangError::Compile(CompileError::new(
                 "Missing return type in function signature",
@@ -888,6 +953,7 @@ impl Analyzer {
         Ok(Some(DataType::Function {
             params: param_types,
             return_type: Box::new(return_type),
+            purity,
         }))
     }
 
@@ -953,7 +1019,10 @@ impl Analyzer {
 
     fn register_vec_builtins(&mut self, suffix: &str, element_type: DataType) {
         let vec_type = DataType::Vector(Box::new(element_type.clone()));
-        let mut register = |name: String, param_types: Vec<DataType>, return_type: DataType| {
+        let mut register = |name: String,
+                            param_types: Vec<DataType>,
+                            return_type: DataType,
+                            purity: FunctionPurity| {
             self.function_table
                 .entry(name.clone())
                 .or_default()
@@ -962,6 +1031,7 @@ impl Analyzer {
                     type_params: Vec::new(),
                     param_types,
                     return_type,
+                    purity,
                     trait_bounds: Vec::new(),
                     definition_span: Span::default(),
                 });
@@ -970,27 +1040,34 @@ impl Analyzer {
             format!("vec_new_{}", suffix),
             alloc::vec![],
             vec_type.clone(),
+            FunctionPurity::Pure,
         );
         register(
             format!("vec_push_{}", suffix),
             alloc::vec![vec_type.clone(), element_type.clone()],
             DataType::Unit,
+            FunctionPurity::Impure,
         );
         register(
             format!("vec_get_{}", suffix),
             alloc::vec![vec_type.clone(), DataType::I32],
             element_type.clone(),
+            FunctionPurity::Pure,
         );
         register(
             format!("vec_len_{}", suffix),
             alloc::vec![vec_type],
             DataType::I32,
+            FunctionPurity::Pure,
         );
     }
 }
 
 fn signatures_equivalent(a: &FunctionSignature, b: &FunctionSignature) -> bool {
     if a.param_types.len() != b.param_types.len() {
+        return false;
+    }
+    if a.purity != b.purity {
         return false;
     }
     let (a_params, a_ret) = canonicalize_signature(a);
@@ -1031,12 +1108,14 @@ fn canonicalize_type(ty: &DataType, mapping: &BTreeMap<String, String>) -> DataT
         DataType::Function {
             params,
             return_type,
+            purity,
         } => DataType::Function {
             params: params
                 .iter()
                 .map(|param| canonicalize_type(param, mapping))
                 .collect(),
             return_type: Box::new(canonicalize_type(return_type, mapping)),
+            purity: *purity,
         },
         _ => ty.clone(),
     }
@@ -1061,9 +1140,11 @@ mod tests {
             DataType::Function {
                 params,
                 return_type,
+                purity,
             } => {
                 assert_eq!(params, alloc::vec![DataType::I32, DataType::String]);
                 assert_eq!(*return_type, DataType::Bool);
+                assert_eq!(purity, FunctionPurity::Impure);
             }
             other => panic!("unexpected type: {:?}", other),
         }
