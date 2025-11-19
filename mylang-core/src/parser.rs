@@ -29,6 +29,11 @@ pub struct ParseOutput {
     pub refinements: Vec<MathAstNode>,
 }
 
+#[derive(Clone, Copy, Default)]
+struct ParseSexprOptions {
+    stop_on_line_break: bool,
+}
+
 impl ParseOutput {
     pub fn has_errors(&self) -> bool {
         self.diagnostics
@@ -504,12 +509,20 @@ impl Parser {
 
     /// S式（S-expression）をパースする
     fn parse_sexpression(&mut self) -> Result<RawAstNode, LangError> {
+        self.parse_sexpression_with_options(ParseSexprOptions::default())
+    }
+
+    fn parse_sexpression_with_options(
+        &mut self,
+        options: ParseSexprOptions,
+    ) -> Result<RawAstNode, LangError> {
         // 式の先頭がブロックなら、ブロック式としてパースする
         if self.peek() == Some(&Token::LBrace) {
             return self.parse_block();
         }
 
         let mut parts = Vec::new();
+        let mut last_part_line: Option<usize> = None;
         // 式の終わりは、文脈を区切るトークン
         while !self.is_at_end() {
             match self.peek() {
@@ -526,6 +539,9 @@ impl Parser {
             // 式の部品を1つパースする
             let part = self.parse_expr_part()?;
             parts.push(part);
+            if options.stop_on_line_break {
+                last_part_line = Some(Self::expr_part_span(parts.last().unwrap()).line);
+            }
 
             // 【LL(1)ロジック】今パースしたのがIdentifierで、次にCallLParenが続くなら、それはC-style呼び出しの一部
             if let Some(RawExprPart::Token(Token::Identifier(_), _)) = parts.last() {
@@ -533,6 +549,19 @@ impl Parser {
                     // C-styleの引数リストをパースしてpartsに追加する
                     let args_part = self.parse_c_style_args()?;
                     parts.push(args_part);
+                    if options.stop_on_line_break {
+                        last_part_line = Some(Self::expr_part_span(parts.last().unwrap()).line);
+                    }
+                }
+            }
+
+            if options.stop_on_line_break {
+                if let Some(last_line) = last_part_line {
+                    if let Some((_, span)) = self.peek_full() {
+                        if span.line > last_line {
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -594,6 +623,21 @@ impl Parser {
                 *span,
             )
             .into()),
+        }
+    }
+
+    fn expr_part_span(part: &RawExprPart) -> Span {
+        match part {
+            RawExprPart::Token(_, span)
+            | RawExprPart::PipeOperator(span)
+            | RawExprPart::Group(_, span)
+            | RawExprPart::CStyleArgs(_, span)
+            | RawExprPart::MathBlock(_, span)
+            | RawExprPart::TypeAnnotation(_, span)
+            | RawExprPart::IfExpr { span, .. }
+            | RawExprPart::MatchExpr { span, .. }
+            | RawExprPart::TupleLiteral(_, span)
+            | RawExprPart::Lambda { span, .. } => *span,
         }
     }
 
@@ -768,17 +812,13 @@ impl Parser {
     /// S式の一部として `if <cond> { ... } else { ... }` をパースする
     fn parse_if_as_part(&mut self) -> Result<RawExprPart, LangError> {
         let start_span = self.consume(Token::If)?.1;
-        let condition = self.parse_sexpression()?;
-        let then_branch = self.parse_block()?;
+        let condition = self.parse_sexpression_with_options(ParseSexprOptions {
+            stop_on_line_break: true,
+        })?;
+        let then_branch = self.parse_sexpression()?;
 
         let else_branch = if self.check_and_consume(Token::Else) {
-            // `else if ...` は `else` の後に続く式として解釈する
-            // `else {` の場合はブロックとして解釈する
-            if self.peek() == Some(&Token::LBrace) {
-                self.parse_block()?
-            } else {
-                self.parse_sexpression()?
-            }
+            self.parse_sexpression()?
         } else {
             // elseがない場合、Unitを返す空のブロックを生成する
             let dummy_span = self.peek_span();

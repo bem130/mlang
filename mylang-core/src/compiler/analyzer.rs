@@ -1157,6 +1157,7 @@ fn reduce_stack_once(
 
     let args_slice = &stack[idx + 1..];
     let mut best_match: Option<(FunctionSignature, usize)> = None;
+    let mut last_overload_error: Option<LangError> = None;
 
     // アリティが最も大きい（＝最も多くの引数を消費する）オーバーロードから試す
     'outer: for arity in (1..=args_slice.len()).rev() {
@@ -1172,7 +1173,7 @@ fn reduce_stack_once(
                     continue 'outer;
                 }
             }
-            if let Ok(signature) = select_overload(
+            match select_overload(
                 analyzer,
                 &name,
                 &candidates,
@@ -1180,8 +1181,13 @@ fn reduce_stack_once(
                 Some(&typed_args),
                 span,
             ) {
-                best_match = Some((signature, arity));
-                break;
+                Ok(signature) => {
+                    best_match = Some((signature, arity));
+                    break;
+                }
+                Err(err) => {
+                    last_overload_error = Some(err);
+                }
             }
         }
     }
@@ -1203,6 +1209,8 @@ fn reduce_stack_once(
         // スタックの関数と引数を、評価後の式で置き換える
         stack.splice(idx..=idx + arity, [SexpStackVal::Expr(call_expr)]);
         Ok(true)
+    } else if let Some(err) = last_overload_error {
+        Err(err)
     } else {
         Err(LangError::Compile(CompileError::new(
             format!("Not enough arguments for function '{}'", name),
@@ -1227,18 +1235,44 @@ fn reduce_polish_notation_stack(
 
     if stack.len() > 1 {
         // これ以上縮約できないのに、スタックに複数の要素が残っている場合はエラー
-        let first_fn = stack.iter().find_map(|v| match v {
-            SexpStackVal::Fn(name, span) => Some((name.clone(), *span)),
-            _ => None,
-        });
-        if let Some((name, span)) = first_fn {
-            return Err(LangError::Compile(CompileError::new(
-                format!(
-                    "Could not resolve call to function '{}' with available arguments",
-                    name
-                ),
-                span,
-            )));
+        if let Some(fn_pos) = stack
+            .iter()
+            .position(|v| matches!(v, SexpStackVal::Fn(_, _)))
+        {
+            if let SexpStackVal::Fn(name, span) = &stack[fn_pos] {
+                let arg_types: Vec<DataType> = stack
+                    .iter()
+                    .skip(fn_pos + 1)
+                    .filter_map(|val| match val {
+                        SexpStackVal::Expr(expr) => Some(expr.data_type.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let message = if arg_types.is_empty() {
+                    format!("Not enough arguments for function '{}'", name)
+                } else {
+                    format!(
+                        "No overload of '{}' matches argument types {}",
+                        name,
+                        format_argument_types(&arg_types)
+                    )
+                };
+                let mut err = CompileError::new(message, *span);
+                if let Some(candidates) = analyzer.function_table.get(name) {
+                    for candidate in candidates {
+                        err = err.with_note(
+                            format!(
+                                "{} rejected: expected {} arguments, but {} provided",
+                                describe_signature(candidate),
+                                candidate.param_types.len(),
+                                arg_types.len()
+                            ),
+                            candidate.definition_span,
+                        );
+                    }
+                }
+                return Err(LangError::Compile(err));
+            }
         } else {
             return Err(LangError::Compile(CompileError::new(
                 "Invalid expression sequence: expression does not resolve to a single value",
