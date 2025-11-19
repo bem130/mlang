@@ -68,6 +68,7 @@ pub enum RawAstNode {
         params: Vec<((String, Span), (String, Span))>, // ((name, span), (type, span))
         body: Box<RawAstNode>,
         return_type: (String, Span),
+        purity: FunctionPurity,
         span: Span,
     },
     // ブロック
@@ -131,6 +132,7 @@ pub struct RawTraitMethod {
     pub type_params: Vec<RawTypeParam>,
     pub params: Vec<((String, Span), (String, Span))>,
     pub return_type: (String, Span),
+    pub purity: FunctionPurity,
     pub body: Option<Box<RawAstNode>>,
     pub span: Span,
 }
@@ -185,6 +187,7 @@ pub enum RawExprPart {
         params: Vec<((String, Span), (String, Span))>, // ((name, span), (type, span))
         body: Box<RawAstNode>,
         return_type: (String, Span),
+        purity: FunctionPurity,
         span: Span,
     },
 }
@@ -241,6 +244,7 @@ pub enum TypedAstNode {
         params: Vec<(String, DataType)>,
         body: TypedExpr,
         return_type: DataType,
+        purity: FunctionPurity,
         span: Span,
     },
     StructDef {
@@ -275,6 +279,12 @@ pub struct TypedEnumVariant {
 }
 
 // 型付きの「式」を表すデータ構造
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FunctionPurity {
+    Pure,
+    Impure,
+}
+
 #[derive(Debug, Clone)]
 pub struct TypedExpr {
     pub kind: TypedExprKind,
@@ -311,6 +321,7 @@ pub enum TypedExprKind {
     Lambda {
         params: Vec<(String, DataType)>,
         body: Box<TypedExpr>,
+        purity: FunctionPurity,
     },
     FunctionCall {
         name: String,
@@ -375,6 +386,7 @@ pub enum DataType {
     Function {
         params: Vec<DataType>,
         return_type: Box<DataType>,
+        purity: FunctionPurity,
     },
     /// Refined type: `<binder: Base | predicate>`
     Refined {
@@ -415,15 +427,21 @@ impl fmt::Display for DataType {
             DataType::Function {
                 params,
                 return_type,
+                purity,
             } => {
+                let arrow = match purity {
+                    FunctionPurity::Pure => "*>",
+                    FunctionPurity::Impure => "->",
+                };
                 write!(
                     f,
-                    "({}) -> {}",
+                    "({}) {} {}",
                     params
                         .iter()
                         .map(|p| p.to_string())
                         .collect::<Vec<_>>()
                         .join(", "),
+                    arrow,
                     return_type
                 )
             }

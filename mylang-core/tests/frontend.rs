@@ -1,5 +1,5 @@
 use mylang_core::analyze_source;
-use mylang_core::ast::{DataType, TypedAstNode};
+use mylang_core::ast::{DataType, FunctionPurity, TypedAstNode};
 use mylang_core::compiler::FunctionSignature;
 use mylang_core::error::LangError;
 use serde::Deserialize;
@@ -562,13 +562,18 @@ fn data_type_to_str(data_type: &DataType) -> String {
         DataType::Function {
             params,
             return_type,
+            purity,
         } => {
             let params_s = params
                 .iter()
                 .map(data_type_to_str)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("({}) -> {}", params_s, data_type_to_str(return_type))
+            let arrow = match purity {
+                FunctionPurity::Pure => "*>",
+                FunctionPurity::Impure => "->",
+            };
+            format!("({}) {} {}", params_s, arrow, data_type_to_str(return_type))
         }
         DataType::Refined { base, .. } => data_type_to_str(base),
     }

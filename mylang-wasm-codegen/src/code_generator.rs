@@ -346,7 +346,7 @@ fn generate_expr(generator: &mut WasmGenerator, node: &TypedExpr) -> Result<(), 
             generator.wat_buffer.push_str("      end\n");
             generator.wat_buffer.push_str("    end\n");
         }
-        TypedExprKind::Lambda { params, body } => {
+        TypedExprKind::Lambda { params, body, .. } => {
             generator.lambda_count += 1;
             let lambda_name = format!("__lambda_{}", generator.lambda_count);
 
@@ -715,41 +715,41 @@ fn generate_pattern_condition(
         TypedPattern::Literal(literal) => {
             let value_core = value_type.core_type();
             match (&value_core, literal) {
-            (DataType::I32, LiteralValue::I32(val)) => {
-                generator
-                    .wat_buffer
-                    .push_str(&format!("        local.get ${}\n", scrutinee_local));
-                generator
-                    .wat_buffer
-                    .push_str(&format!("        i32.const {}\n", val));
-                generator.wat_buffer.push_str("        i32.eq\n");
+                (DataType::I32, LiteralValue::I32(val)) => {
+                    generator
+                        .wat_buffer
+                        .push_str(&format!("        local.get ${}\n", scrutinee_local));
+                    generator
+                        .wat_buffer
+                        .push_str(&format!("        i32.const {}\n", val));
+                    generator.wat_buffer.push_str("        i32.eq\n");
+                }
+                (DataType::Bool, LiteralValue::Bool(val)) => {
+                    generator
+                        .wat_buffer
+                        .push_str(&format!("        local.get ${}\n", scrutinee_local));
+                    generator
+                        .wat_buffer
+                        .push_str(&format!("        i32.const {}\n", if *val { 1 } else { 0 }));
+                    generator.wat_buffer.push_str("        i32.eq\n");
+                }
+                (DataType::F64, LiteralValue::F64(val)) => {
+                    generator
+                        .wat_buffer
+                        .push_str(&format!("        local.get ${}\n", scrutinee_local));
+                    generator
+                        .wat_buffer
+                        .push_str(&format!("        f64.const {}\n", val));
+                    generator.wat_buffer.push_str("        f64.eq\n");
+                }
+                _ => {
+                    return Err(LangError::Compile(CompileError::new(
+                        "Literal patterns are only supported for i32, f64, and bool values in code generation",
+                        span,
+                    )));
+                }
             }
-            (DataType::Bool, LiteralValue::Bool(val)) => {
-                generator
-                    .wat_buffer
-                    .push_str(&format!("        local.get ${}\n", scrutinee_local));
-                generator
-                    .wat_buffer
-                    .push_str(&format!("        i32.const {}\n", if *val { 1 } else { 0 }));
-                generator.wat_buffer.push_str("        i32.eq\n");
-            }
-            (DataType::F64, LiteralValue::F64(val)) => {
-                generator
-                    .wat_buffer
-                    .push_str(&format!("        local.get ${}\n", scrutinee_local));
-                generator
-                    .wat_buffer
-                    .push_str(&format!("        f64.const {}\n", val));
-                generator.wat_buffer.push_str("        f64.eq\n");
-            }
-            _ => {
-                return Err(LangError::Compile(CompileError::new(
-                    "Literal patterns are only supported for i32, f64, and bool values in code generation",
-                    span,
-                )));
-            }
-            }
-        },
+        }
         TypedPattern::Tuple(elements) => {
             let value_core = value_type.core_type();
             if let DataType::Tuple(field_types) = value_core {

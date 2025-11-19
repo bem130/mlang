@@ -106,6 +106,7 @@ pub fn analyze_toplevel(
             }
 
             let type_scope_len = analyzer.push_type_params(&signature.type_params);
+            analyzer.push_purity(signature.purity);
             let result = (|| {
                 analyzer.enter_scope();
                 let mut typed_params = Vec::new();
@@ -132,6 +133,7 @@ pub fn analyze_toplevel(
                             data_type: param_type.clone(),
                             scope_depth: analyzer.scope_depth,
                             is_mutable: false,
+                            is_parameter: true,
                         });
                         typed_params.push((param_name.clone(), param_type));
                     }
@@ -178,10 +180,12 @@ pub fn analyze_toplevel(
                     params: typed_params,
                     body: typed_body,
                     return_type: return_type_resolved,
+                    purity: signature.purity,
                     span: *span,
                 })
             })();
             analyzer.pop_type_params(type_scope_len);
+            analyzer.pop_purity();
             result
         }
         // トップレベルの他の式は暗黙のmain関数の一部として扱われる (lib.rsでラップ済み)
@@ -241,6 +245,7 @@ pub fn analyze_impl_block(
             params: method.params.clone(),
             body: body.clone(),
             return_type: method.return_type.clone(),
+            purity: method.purity,
             span: method.span,
         };
         let synthetic_fn = RawAstNode::LetHoist {
@@ -304,6 +309,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                 data_type: typed_value.data_type.clone(),
                 scope_depth: analyzer.scope_depth,
                 is_mutable: false,
+                is_parameter: false,
             });
             Ok(TypedExpr {
                 kind: TypedExprKind::LetBinding {
@@ -327,6 +333,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                 data_type: typed_value.data_type.clone(),
                 scope_depth: analyzer.scope_depth,
                 is_mutable: true,
+                is_parameter: false,
             });
             Ok(TypedExpr {
                 kind: TypedExprKind::LetBinding {
@@ -352,6 +359,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                 data_type: typed_value.data_type.clone(),
                 scope_depth: analyzer.scope_depth,
                 is_mutable: false, // let hoist is for functions, which are immutable
+                is_parameter: false,
             });
             Ok(TypedExpr {
                 kind: TypedExprKind::LetHoistBinding {
@@ -370,6 +378,15 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                     return Err(LangError::Compile(CompileError::new(
                         format!(
                             "Cannot assign to immutable variable '{}'",
+                            entry.original_name
+                        ),
+                        name.1,
+                    )));
+                }
+                if entry.is_parameter && analyzer.current_purity() == FunctionPurity::Pure {
+                    return Err(LangError::Compile(CompileError::new(
+                        format!(
+                            "Cannot reassign parameter '{}' inside a pure function",
                             entry.original_name
                         ),
                         name.1,
@@ -403,9 +420,11 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
             params: lambda_params,
             body: lambda_body,
             return_type: raw_return_type,
+            purity,
             span,
         } => {
             analyzer.enter_scope();
+            analyzer.push_purity(*purity);
             let mut typed_params = Vec::new();
             let mut param_types = Vec::new();
 
@@ -417,6 +436,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
                     data_type: param_type.clone(),
                     scope_depth: analyzer.scope_depth,
                     is_mutable: false,
+                    is_parameter: true,
                 });
                 typed_params.push((param_name.clone(), param_type.clone()));
                 param_types.push(param_type);
@@ -424,6 +444,7 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
 
             let typed_body = analyze_expr(analyzer, lambda_body)?;
             analyzer.leave_scope();
+            analyzer.pop_purity();
 
             let explicit_return_type =
                 analyzer.string_to_type(&raw_return_type.0, raw_return_type.1)?;
@@ -444,12 +465,14 @@ pub fn analyze_expr(analyzer: &mut Analyzer, node: &RawAstNode) -> Result<TypedE
             let function_type = DataType::Function {
                 params: param_types,
                 return_type: Box::new(explicit_return_type),
+                purity: *purity,
             };
 
             Ok(TypedExpr {
                 kind: TypedExprKind::Lambda {
                     params: typed_params,
                     body: Box::new(typed_body),
+                    purity: *purity,
                 },
                 data_type: function_type,
                 span: *span,
@@ -614,9 +637,13 @@ fn describe_signature(signature: &FunctionSignature) -> String {
         }
         format!("<{}>", formatted.join(", "))
     };
+    let arrow = match signature.purity {
+        FunctionPurity::Pure => "*>",
+        FunctionPurity::Impure => "->",
+    };
     format!(
-        "fn {}{}({}) -> {}",
-        signature.name, generics, params, signature.return_type
+        "fn {}{}({}) {} {}",
+        signature.name, generics, params, arrow, signature.return_type
     )
 }
 
@@ -821,6 +848,25 @@ fn select_overload(
     Ok(matches[0].clone())
 }
 
+fn ensure_call_allowed(
+    analyzer: &Analyzer,
+    signature: &FunctionSignature,
+    span: Span,
+) -> Result<(), LangError> {
+    if analyzer.current_purity() == FunctionPurity::Pure
+        && signature.purity == FunctionPurity::Impure
+    {
+        return Err(LangError::Compile(CompileError::new(
+            format!(
+                "Pure functions cannot call impure function '{}'",
+                signature.name
+            ),
+            span,
+        )));
+    }
+    Ok(())
+}
+
 fn check_trait_bounds(
     analyzer: &Analyzer,
     signature: &FunctionSignature,
@@ -895,12 +941,14 @@ pub(crate) fn apply_type_substitution(
         DataType::Function {
             params,
             return_type,
+            purity,
         } => DataType::Function {
             params: params
                 .iter()
                 .map(|param| apply_type_substitution(param, substitution))
                 .collect(),
             return_type: Box::new(apply_type_substitution(return_type, substitution)),
+            purity: *purity,
         },
         _ => ty.clone(),
     }
@@ -996,10 +1044,12 @@ fn unify_types(
         DataType::Function {
             params,
             return_type,
+            purity: expected_purity,
         } => match actual {
             DataType::Function {
                 params: actual_params,
                 return_type: actual_return,
+                purity: actual_purity,
             } => {
                 if params.len() != actual_params.len() {
                     return Err(format!(
@@ -1007,6 +1057,11 @@ fn unify_types(
                         params.len(),
                         actual_params.len()
                     ));
+                }
+                if *expected_purity == FunctionPurity::Pure
+                    && *actual_purity != FunctionPurity::Pure
+                {
+                    return Err("expected a pure function but found an impure one".to_string());
                 }
                 for (expected_param, actual_param) in params.iter().zip(actual_params.iter()) {
                     unify_types(analyzer, expected_param, actual_param, substitution)?;
@@ -1074,6 +1129,7 @@ fn resolve_c_style_call<'a>(
         Some(&typed_args),
         span,
     )?;
+    ensure_call_allowed(analyzer, &signature, span)?;
 
     // 呼び出し元のスライスから、消費した識別子とCStyleArgsの2つ分を進める
     *parts = &parts[2..];
@@ -1187,6 +1243,7 @@ fn reduce_stack_once(
     }
 
     if let Some((signature, arity)) = best_match {
+        ensure_call_allowed(analyzer, &signature, span)?;
         let args: Vec<TypedExpr> = (idx + 1..=idx + arity)
             .map(|j| match &stack[j] {
                 SexpStackVal::Expr(expr) => expr.clone(),
@@ -1559,12 +1616,14 @@ fn analyze_complex_part<'a>(
             params,
             body,
             return_type,
+            purity,
             span,
         } => {
             let raw_lambda_node = RawAstNode::Lambda {
                 params: params.clone(),
                 body: body.clone(),
                 return_type: return_type.clone(),
+                purity: *purity,
                 span: *span,
             };
             analyze_expr(analyzer, &raw_lambda_node)
@@ -1950,6 +2009,7 @@ fn analyze_pattern(
                 data_type: expected_type.clone(),
                 scope_depth: analyzer.scope_depth,
                 is_mutable: false,
+                is_parameter: false,
             };
             Ok((
                 TypedPattern::Binding {

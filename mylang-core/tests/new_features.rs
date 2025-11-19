@@ -382,6 +382,64 @@ fn kind |x: i32|->i32 {
 }
 
 #[test]
+fn pure_functions_can_call_other_pure_functions() {
+    let source = r#"
+fn add |lhs: i32, rhs: i32| *> i32 $lhs + rhs$;
+fn square |n: i32| *> i32 $n * n$;
+
+fn sum_sq |a: i32, b: i32| *> i32 {
+    add square a square b
+};
+
+fn main ||->() {
+    let result sum_sq 3 4;
+    result;
+};
+"#;
+
+    analyze_source(source, true).expect("pure functions should compose");
+}
+
+#[test]
+fn pure_function_cannot_call_impure_builtin() {
+    let source = r#"
+fn loud |text: string| *> string {
+    println text;
+    text
+};
+"#;
+
+    let err = match analyze_source(source, true) {
+        Ok(_) => panic!("analysis must fail"),
+        Err(err) => err,
+    };
+    let LangError::Compile(compile_err) = err else {
+        panic!("expected compile error, got {:?}", err);
+    };
+    assert!(
+        compile_err
+            .message
+            .contains("Pure functions cannot call impure function 'println'"),
+        "unexpected error: {}",
+        compile_err.message
+    );
+}
+
+#[test]
+fn pure_function_allows_local_mutation() {
+    let source = r#"
+fn accumulator |a: i32, b: i32| *> i32 {
+    let mut total 0;
+    set total $total + a$;
+    set total $total + b$;
+    total
+};
+"#;
+
+    analyze_source(source, true).expect("local mutation should be allowed inside pure functions");
+}
+
+#[test]
 fn generic_function_signature_is_registered() {
     let source = r#"
 fn identity<T> |x: T|->T x;
