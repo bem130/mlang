@@ -5,6 +5,7 @@
 extern crate alloc;
 
 pub mod ast;
+pub mod builtins;
 pub mod compiler;
 pub mod error;
 pub mod smt;
@@ -16,6 +17,7 @@ mod parser;
 pub use parser::ParseOutput;
 
 use crate::ast::{RawAstNode, TypedAstNode};
+use crate::builtins::ProvidedFunction;
 use crate::compiler::{Analyzer, FunctionSignature};
 use crate::error::{CompileError, Diagnostic, LangError, ParseError};
 use crate::span::{Span, combine_spans};
@@ -172,15 +174,36 @@ pub fn parse_source(source: &str, is_library: bool) -> Result<ParsedModule, Lang
 /// ソースコード文字列を解析し、型付きのASTと解析結果を生成するメイン関数。
 /// これがこのライブラリの公開APIとなります。
 pub fn analyze_source(source: &str, is_library: bool) -> Result<AnalysisResult, LangError> {
-    analyze_for_ide(source, is_library).map(|analysis| analysis.analysis)
+    analyze_source_with_builtins(source, is_library, &[])
+}
+
+/// 外部から提供された組み込み関数を追加登録した上でソースコードを解析する。
+pub fn analyze_source_with_builtins(
+    source: &str,
+    is_library: bool,
+    provided_builtins: &[ProvidedFunction],
+) -> Result<AnalysisResult, LangError> {
+    analyze_for_ide_with_builtins(source, is_library, provided_builtins)
+        .map(|analysis| analysis.analysis)
 }
 
 /// IDEで利用するために、字句解析から意味解析までをまとめて実行する。
 pub fn analyze_for_ide(source: &str, is_library: bool) -> Result<IdeAnalysis, LangError> {
+    analyze_for_ide_with_builtins(source, is_library, &[])
+}
+
+/// IDEで利用するために、字句解析か意味解析までをまとめて実行する。
+/// 外部環境から提供される関数も合わせて組み込み関数として登録する。
+pub fn analyze_for_ide_with_builtins(
+    source: &str,
+    is_library: bool,
+    provided_builtins: &[ProvidedFunction],
+) -> Result<IdeAnalysis, LangError> {
     let parsed = parse_source(source, is_library)?;
     let mut analyzer = Analyzer::new();
     // Transfer parsed refinement predicates into the analyzer for later use
     analyzer.refinements = parsed.refinements.clone();
+    analyzer.register_provided_builtins(provided_builtins);
     let typed_ast = analyzer.analyze(&parsed.prepared_ast)?;
     let analysis = AnalysisResult {
         typed_ast,
