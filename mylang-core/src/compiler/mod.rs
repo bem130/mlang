@@ -5,6 +5,7 @@ extern crate alloc;
 pub mod analyzer;
 
 use crate::ast::*;
+use crate::builtins::ProvidedFunction;
 use crate::compiler::analyzer::apply_type_substitution;
 use crate::error::{CompileError, LangError};
 use crate::span::Span;
@@ -104,52 +105,9 @@ pub struct TraitImplInfo {
 
 impl Analyzer {
     pub fn new() -> Self {
-        let mut function_table: BTreeMap<String, Vec<FunctionSignature>> = BTreeMap::new();
-        {
-            let mut register_builtin =
-                |name: &str, param_types: Vec<DataType>, return_type: DataType| {
-                    function_table
-                        .entry(name.to_string())
-                        .or_default()
-                        .push(FunctionSignature {
-                            name: name.to_string(),
-                            type_params: Vec::new(),
-                            param_types,
-                            return_type,
-                            trait_bounds: Vec::new(),
-                            definition_span: Span::default(),
-                        });
-                };
-
-            // --- 標準組み込み関数を登録 ---
-            register_builtin(
-                "string_concat",
-                alloc::vec![DataType::String, DataType::String],
-                DataType::String,
-            );
-            register_builtin(
-                "i32_to_string",
-                alloc::vec![DataType::I32],
-                DataType::String,
-            );
-            register_builtin(
-                "f64_to_string",
-                alloc::vec![DataType::F64],
-                DataType::String,
-            );
-            register_builtin("print", alloc::vec![DataType::String], DataType::Unit);
-            register_builtin("println", alloc::vec![DataType::String], DataType::Unit);
-            register_builtin("read_line", alloc::vec![], DataType::String);
-            register_builtin(
-                "string_char_at",
-                alloc::vec![DataType::String, DataType::I32],
-                DataType::String,
-            );
-        }
-
         let mut analyzer = Self {
             scope_depth: 0,
-            function_table,
+            function_table: BTreeMap::new(),
             variable_table: Vec::new(),
             var_counters: BTreeMap::new(),
             string_headers: BTreeMap::new(),
@@ -164,12 +122,75 @@ impl Analyzer {
             refinements: Vec::new(),
         };
 
+        // --- 標準組み込み関数を登録 ---
+        analyzer.register_builtin(
+            "string_concat",
+            alloc::vec![DataType::String, DataType::String],
+            DataType::String,
+        );
+        analyzer.register_builtin(
+            "i32_to_string",
+            alloc::vec![DataType::I32],
+            DataType::String,
+        );
+        analyzer.register_builtin(
+            "f64_to_string",
+            alloc::vec![DataType::F64],
+            DataType::String,
+        );
+        analyzer.register_builtin("print", alloc::vec![DataType::String], DataType::Unit);
+        analyzer.register_builtin("println", alloc::vec![DataType::String], DataType::Unit);
+        analyzer.register_builtin("read_line", alloc::vec![], DataType::String);
+        analyzer.register_builtin(
+            "string_char_at",
+            alloc::vec![DataType::String, DataType::I32],
+            DataType::String,
+        );
+
         // printlnが内部的に使用する改行文字を静的領域に事前登録しておく
         analyzer.ensure_string_is_statically_allocated(&"\n".to_string());
 
         analyzer.register_vec_builtins("i32", DataType::I32);
 
         analyzer
+    }
+
+    pub fn register_builtin(
+        &mut self,
+        name: &str,
+        param_types: Vec<DataType>,
+        return_type: DataType,
+    ) {
+        let signature = FunctionSignature {
+            name: name.to_string(),
+            type_params: Vec::new(),
+            param_types,
+            return_type,
+            trait_bounds: Vec::new(),
+            definition_span: Span::default(),
+        };
+
+        let candidates = self.function_table.entry(name.to_string()).or_default();
+        let is_duplicate = candidates.iter().any(|existing| {
+            existing.param_types == signature.param_types
+                && existing.return_type == signature.return_type
+                && existing.type_params == signature.type_params
+                && existing.trait_bounds == signature.trait_bounds
+        });
+
+        if !is_duplicate {
+            candidates.push(signature);
+        }
+    }
+
+    pub fn register_provided_builtins(&mut self, provided: &[ProvidedFunction]) {
+        for func in provided {
+            self.register_builtin(
+                &func.name,
+                func.param_types.clone(),
+                func.return_type.clone(),
+            );
+        }
     }
 
     /// 解析のメインエントリーポイント
@@ -805,7 +826,9 @@ impl Analyzer {
         if let Some(rest) = s.strip_prefix("__ref_") {
             // format: id#binder#base
             let mut parts = rest.splitn(3, '#');
-            if let (Some(id_str), Some(binder), Some(base)) = (parts.next(), parts.next(), parts.next()) {
+            if let (Some(id_str), Some(binder), Some(base)) =
+                (parts.next(), parts.next(), parts.next())
+            {
                 if let Ok(id) = id_str.parse::<usize>() {
                     // base may itself be a type string; parse it recursively
                     let base_ty = self.string_to_type(base, span)?;
