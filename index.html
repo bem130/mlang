@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mylang Web Playground</title>
+    <script type="module" crossorigin src="./assets/index-BsWPOpF7.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-C5jB7VhW.css">
+  </head>
+  <body>
+    <header class="page-header">
+      <div class="page-header__inner">
+        <div class="page-header__intro">
+          <h1>mylang Playground</h1>
+          <p>ブラウザ上でmylangコードを編集し、WATを生成して実行できます。</p>
+        </div>
+        <nav class="page-header__actions" aria-label="Additional resources">
+          <a
+            id="docs-link"
+            class="page-header__link"
+            data-docs-url="../doc/"
+            href="../doc/"
+            target="_blank"
+            rel="noopener"
+          >
+            Documentation
+          </a>
+        </nav>
+      </div>
+    </header>
+    <main class="layout">
+      <section class="panel">
+        <label for="source" class="panel__label">ソースコード</label>
+        <textarea id="source" class="panel__textarea" spellcheck="false"></textarea>
+        <div class="panel__controls">
+          <button id="compile">WATを生成</button>
+          <button id="run" class="primary">Wasmを実行</button>
+        </div>
+        <div class="panel__controls panel__controls--stepping">
+          <span class="panel__controls-label">ステップ実行</span>
+          <div class="panel__controls-group">
+            <button id="step-start">開始 / 再開</button>
+            <button id="step-pause">一時停止</button>
+            <button id="step-stop" class="danger">停止</button>
+          </div>
+        </div>
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+      </section>
+      <section class="panel">
+        <label for="wat" class="panel__label">生成されたWAT</label>
+        <textarea id="wat" class="panel__textarea" readonly spellcheck="false"></textarea>
+      </section>
+      <section class="panel panel--terminal">
+        <label for="terminal" class="panel__label">実行結果 (ターミナル)</label>
+        <div id="terminal" class="panel__terminal-container"></div>
+      </section>
+    </main>
+    <footer class="page-footer">
+      <p>wasm32ターゲット向けにビルドされたコンパイラと<code>wasmi</code>を利用しています。</p>
+    </footer>
+  </body>
+</html>
